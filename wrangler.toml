@@ -2,6 +2,7 @@ name = "mycelia-api"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+account_id = "fc6ac609a885ab8191809ec35bc8e58f"
 
 [vars]
 ENVIRONMENT = "production"
@@ -9,11 +10,11 @@ ENVIRONMENT = "production"
 [[d1_databases]]
 binding = "DB"
 database_name = "mycelia-db"
-database_id = "TO_BE_FILLED"
+database_id = "b5c669b5-b51e-41ad-a521-cf41cdd24bba"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "TO_BE_FILLED"
+id = "fea48e2a98d84a3bbdff2e47195683e2"
 
 [[r2_buckets]]
 binding = "R2_AUDIT"
