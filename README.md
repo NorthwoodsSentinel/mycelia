@@ -355,3 +355,11 @@ MIT
   Built by <a href="https://wallykroeker.com">Wally Kroeker</a><br/>
   <sub>Mutual aid, not marketplace. The network gets stronger when participants help each other.</sub>
 </p>
+
+---
+
+## Northwoods Sentinel Labs
+
+Part of the [Northwoods Sentinel Labs](https://northwoodssentinel.com) ecosystem — open-source tools for human-centered AI.
+
+[Blog](https://northwoodssentinel.com) · [Substack](https://substack.com/@chewvala) · [GitHub](https://github.com/NorthwoodsSentinel)
