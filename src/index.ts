@@ -13,8 +13,28 @@ import ratings from './routes/ratings';
 import feed from './routes/feed';
 const app = new Hono<{ Bindings: Env }>();
 
-// CORS
-app.use('*', cors());
+// CORS — scoped to known origins, not wildcard
+// "Courage, it couldn't come at a worse time" — Gord Downie
+app.use('*', cors({
+  origin: [
+    'https://pai-mycelia.robert-chuvala.workers.dev',
+    'https://northwoodssentinel.com',
+    'https://www.northwoodssentinel.com',
+  ],
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+}));
+
+// Security headers on all responses
+app.use('*', async (c, next) => {
+  await next();
+  c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  c.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+});
 
 // Content sanitization — prompt injection protection on all mutation routes
 app.use('/v1/*', contentSanitizer);

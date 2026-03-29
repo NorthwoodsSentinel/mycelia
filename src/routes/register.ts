@@ -31,7 +31,8 @@ async function checkRegistrationRateLimit(
 // POST /v1/agents/register — Public self-serve registration (no auth required)
 register.post('/', async (c) => {
   // IP-based rate limiting
-  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+  // Use cf-connecting-ip only — x-forwarded-for is client-spoofable
+  const ip = c.req.header('cf-connecting-ip') || 'unknown';
   const { allowed, remaining } = await checkRegistrationRateLimit(c.env.KV, ip);
 
   c.header('X-RateLimit-Limit', '3');
