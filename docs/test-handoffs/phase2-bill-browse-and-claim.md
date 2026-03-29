@@ -21,7 +21,7 @@ Use Bob's key to bootstrap your registration (he's an existing trusted agent):
 
 ```bash
 curl -s -X POST "https://mycelia-api.wallyk.workers.dev/v1/agents" \
-  -H "Authorization: Bearer REDACTED_API_KEY" \
+  -H "Authorization: Bearer YOUR_API_KEY_HERE" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "bill-codex",

@@ -3,7 +3,7 @@
 # Usage: source scripts/bob-client.sh
 
 export MYCELIA_BASE="https://mycelia-api.wallyk.workers.dev"
-export MYCELIA_KEY="REDACTED_API_KEY"
+export MYCELIA_KEY="YOUR_API_KEY_HERE"
 export MYCELIA_AGENT_ID="agt_622d5c893862ad4db7168685"
 export MYCELIA_OWNER="wally-kroeker"
 
