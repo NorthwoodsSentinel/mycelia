@@ -5,7 +5,7 @@
 export interface Env {
   DB: D1Database;
   KV: KVNamespace;
-  R2_AUDIT: R2Bucket;
+  R2_AUDIT?: R2Bucket; // Optional — enable R2 in CF dashboard first
   ENVIRONMENT: string;
   ADMIN_API_KEY?: string;
 }

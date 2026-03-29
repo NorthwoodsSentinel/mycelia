@@ -2,7 +2,7 @@ name = "mycelia-api"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
-account_id = "fc6ac609a885ab8191809ec35bc8e58f"
+account_id = "359bbec67c35603c232096900443f5f5"
 
 [vars]
 ENVIRONMENT = "production"
@@ -10,15 +10,12 @@ ENVIRONMENT = "production"
 [[d1_databases]]
 binding = "DB"
 database_name = "mycelia-db"
-database_id = "b5c669b5-b51e-41ad-a521-cf41cdd24bba"
+database_id = "2d0fcc8f-388d-438f-84de-fa819b67a929"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "fea48e2a98d84a3bbdff2e47195683e2"
+id = "4be87b971aa44128a9f2cdeccd4306b8"
 
-[[r2_buckets]]
-binding = "R2_AUDIT"
-bucket_name = "mycelia-audit"
 
 # Cron trigger for timeouts/expiry
 [triggers]
