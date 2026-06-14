@@ -180,7 +180,7 @@ interface DriftSummary {
     total_requests_24h: number;
     requests_without_scope_claim_24h: number;
     targeted_requests_24h: number;
-    sacred_refusals_24h: number;
+    sealed_refusals_24h: number;
     revoked_agents_active: number;
   };
   severities: {
@@ -194,17 +194,17 @@ async function computeDrift(db: D1Database, kv: KVNamespace): Promise<DriftSumma
   const now24 = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
 
   // 24h aggregates
-  const [totalReqRow, missingScopeRow, targetedRow, sacredRefRow] = await Promise.all([
+  const [totalReqRow, missingScopeRow, targetedRow, sealedRefRow] = await Promise.all([
     db.prepare(`SELECT COUNT(*) as count FROM requests WHERE created_at >= ?`).bind(now24).first<{ count: number }>(),
     db.prepare(`SELECT COUNT(*) as count FROM requests WHERE created_at >= ? AND (scope_claim_json IS NULL OR scope_claim_json LIKE '%_grace_synthesized%true%')`).bind(now24).first<{ count: number }>(),
     db.prepare(`SELECT COUNT(*) as count FROM requests WHERE created_at >= ? AND target_agent_id IS NOT NULL`).bind(now24).first<{ count: number }>(),
-    db.prepare(`SELECT COUNT(*) as count FROM audit_log WHERE created_at >= ? AND detail LIKE '%SACRED%'`).bind(now24).first<{ count: number }>(),
+    db.prepare(`SELECT COUNT(*) as count FROM audit_log WHERE created_at >= ? AND (detail LIKE '%SEALED%' OR detail LIKE '%SACRED%')`).bind(now24).first<{ count: number }>(),
   ]);
 
   const totalReq = totalReqRow?.count ?? 0;
   const missingScope = missingScopeRow?.count ?? 0;
   const targeted = targetedRow?.count ?? 0;
-  const sacredRef = sacredRefRow?.count ?? 0;
+  const sealedRef = sealedRefRow?.count ?? 0;
 
   // Count active revocations from KV
   let revokedCount = 0;
@@ -226,8 +226,8 @@ async function computeDrift(db: D1Database, kv: KVNamespace): Promise<DriftSumma
     medium.push(`${Math.round((missingScope / totalReq) * 100)}% of last-24h requests missing scope_claim (${missingScope}/${totalReq})`);
   }
 
-  if (sacredRef > 0) {
-    high.push(`${sacredRef} sacred-tier refusal(s) in last 24h — an agent attempted to pass sacred content over mycelia`);
+  if (sealedRef > 0) {
+    high.push(`${sealedRef} sealed-tier refusal(s) in last 24h — an agent attempted to pass sealed content over mycelia`);
   }
 
   if (revokedCount > 0) {
@@ -244,7 +244,7 @@ async function computeDrift(db: D1Database, kv: KVNamespace): Promise<DriftSumma
       total_requests_24h: totalReq,
       requests_without_scope_claim_24h: missingScope,
       targeted_requests_24h: targeted,
-      sacred_refusals_24h: sacredRef,
+      sealed_refusals_24h: sealedRef,
       revoked_agents_active: revokedCount,
     },
     severities: { high, medium, low },

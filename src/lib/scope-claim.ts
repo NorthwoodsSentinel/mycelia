@@ -6,21 +6,69 @@
 /**
  * Tier hierarchy (top is most restrictive).
  *
- * sacred   — Rob + per-item consent only. NEVER over mycelia.
- * intimate — Rob + named fleet. AEBS work-internal. Private in-flight decisions.
+ * sealed   — Principal + per-item consent only. NEVER over mycelia. Handler-discipline-enforced.
+ * personal — Principal + named fleet. Work-internal. In-flight private decisions.
  * cohort   — fleet-internal doctrine, technical specs, project memories.
- * public   — NWS essays, doctrine docs, pack source, anything published.
+ * public   — published essays, doctrine docs, pack source, anything externalized.
+ *
+ * Names changed in v1.1.1 (2026-06-14) from the original `intimate/sacred` defaults
+ * after community-adoption feedback (religious / governance connotations). Operators
+ * who prefer different display labels can alias via TIER_ALIASES_JSON env var
+ * (see docs/specs/MYCELIA_ENVELOPE.md § Tier aliasing).
  */
-export type Tier = 'public' | 'cohort' | 'intimate' | 'sacred';
+export type Tier = 'public' | 'cohort' | 'personal' | 'sealed';
 
 const TIER_RANK: Record<Tier, number> = {
   public: 0,
   cohort: 1,
-  intimate: 2,
-  sacred: 3,
+  personal: 2,
+  sealed: 3,
 };
 
-const TIER_VALUES: readonly Tier[] = ['public', 'cohort', 'intimate', 'sacred'] as const;
+const TIER_VALUES: readonly Tier[] = ['public', 'cohort', 'personal', 'sealed'] as const;
+
+/**
+ * Parse a TIER_ALIASES_JSON env var into a normalized alias map.
+ *
+ * Format: JSON object mapping operator-chosen labels to canonical tier names.
+ *   { "intimate": "personal", "sacred": "sealed" }
+ *
+ * Used to accept legacy or operator-preferred labels on input while keeping
+ * internal logic on the canonical names. Invalid entries (unknown canonical
+ * target, non-string keys, etc.) are silently dropped to keep the system
+ * fail-open on misconfiguration rather than blocking requests.
+ */
+export function parseTierAliases(rawJson: string | undefined | null): Record<string, Tier> {
+  if (!rawJson) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    return {};
+  }
+  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out: Record<string, Tier> = {};
+  for (const [alias, canonical] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof alias !== 'string' || alias.length === 0) continue;
+    if (typeof canonical !== 'string') continue;
+    if (!TIER_VALUES.includes(canonical as Tier)) continue;
+    out[alias] = canonical as Tier;
+  }
+  return out;
+}
+
+/**
+ * Normalize a tier-shaped input to the canonical name.
+ * - If `input` is already a canonical tier, return it.
+ * - If `input` matches a key in `aliases`, return the aliased canonical.
+ * - Otherwise return null (caller treats as INVALID_TIER).
+ */
+export function normalizeTier(input: unknown, aliases: Record<string, Tier> = {}): Tier | null {
+  if (typeof input !== 'string') return null;
+  if (TIER_VALUES.includes(input as Tier)) return input as Tier;
+  if (input in aliases) return aliases[input];
+  return null;
+}
 
 /**
  * The structured envelope every v1.1 mycelia request must carry.
@@ -78,11 +126,13 @@ const STALE_CLAIM_MS = 60 * 60 * 1000; // 1 hour
  *                       Pass null if you want to skip identity-mismatch check
  *                       (e.g. testing).
  * @param now   Unix ms timestamp for "now"; defaults to Date.now(). Injectable for tests.
+ * @param tierAliases  Optional map of operator-chosen labels → canonical tiers. See parseTierAliases.
  */
 export function validateScopeClaim(
   raw: unknown,
   bearerAgentId: string | null,
   now: number = Date.now(),
+  tierAliases: Record<string, Tier> = {},
 ): ValidationResult {
   if (raw == null) {
     return {
@@ -100,7 +150,7 @@ export function validateScopeClaim(
     };
   }
 
-  const c = raw as Partial<ScopeClaim>;
+  const c = raw as Partial<ScopeClaim> & { tier?: unknown; ask_max_tier?: unknown };
 
   if (typeof c.requester !== 'string' || c.requester.length === 0) {
     return { ok: false, code: 'SCOPE_CLAIM_MALFORMED', message: 'scope_claim.requester must be a non-empty string' };
@@ -108,12 +158,16 @@ export function validateScopeClaim(
   if (typeof c.agent_id !== 'string' || c.agent_id.length === 0) {
     return { ok: false, code: 'SCOPE_CLAIM_MALFORMED', message: 'scope_claim.agent_id must be a non-empty string' };
   }
-  if (typeof c.tier !== 'string' || !TIER_VALUES.includes(c.tier as Tier)) {
+
+  const normalizedTier = normalizeTier(c.tier, tierAliases);
+  if (normalizedTier === null) {
     return { ok: false, code: 'INVALID_TIER', message: `scope_claim.tier must be one of ${TIER_VALUES.join(', ')}` };
   }
-  if (typeof c.ask_max_tier !== 'string' || !TIER_VALUES.includes(c.ask_max_tier as Tier)) {
+  const normalizedAsk = normalizeTier(c.ask_max_tier, tierAliases);
+  if (normalizedAsk === null) {
     return { ok: false, code: 'INVALID_TIER', message: `scope_claim.ask_max_tier must be one of ${TIER_VALUES.join(', ')}` };
   }
+
   if (typeof c.ts !== 'string' || c.ts.length === 0) {
     return { ok: false, code: 'SCOPE_CLAIM_MALFORMED', message: 'scope_claim.ts must be an ISO-8601 timestamp string' };
   }
@@ -128,11 +182,11 @@ export function validateScopeClaim(
   }
 
   // ask_max_tier must be <= tier
-  if (TIER_RANK[c.ask_max_tier as Tier] > TIER_RANK[c.tier as Tier]) {
+  if (TIER_RANK[normalizedAsk] > TIER_RANK[normalizedTier]) {
     return {
       ok: false,
       code: 'ASK_EXCEEDS_TIER',
-      message: `scope_claim.ask_max_tier (${c.ask_max_tier}) cannot exceed scope_claim.tier (${c.tier})`,
+      message: `scope_claim.ask_max_tier (${normalizedAsk}) cannot exceed scope_claim.tier (${normalizedTier})`,
     };
   }
 
@@ -154,8 +208,8 @@ export function validateScopeClaim(
     claim: {
       requester: c.requester,
       agent_id: c.agent_id,
-      tier: c.tier as Tier,
-      ask_max_tier: c.ask_max_tier as Tier,
+      tier: normalizedTier,
+      ask_max_tier: normalizedAsk,
       ts: c.ts,
       signature: typeof c.signature === 'string' ? c.signature : undefined,
     },
@@ -178,11 +232,11 @@ export function compareTiers(a: Tier, b: Tier): number {
 }
 
 /**
- * Sacred-tier content NEVER traverses mycelia (handler discipline rule).
+ * Sealed-tier content NEVER traverses mycelia (handler discipline rule).
  * Helper to make the check explicit at call sites.
  */
 export function refusalRequiredForMycelia(contentTier: Tier): boolean {
-  return contentTier === 'sacred';
+  return contentTier === 'sealed';
 }
 
 /**

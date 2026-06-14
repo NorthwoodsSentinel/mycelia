@@ -10,6 +10,16 @@ enabled = true
 [vars]
 ENVIRONMENT = "production"
 
+# Optional: operator-chosen tier label aliases.
+# JSON object mapping aliased label → canonical tier name.
+# Canonical names: public | cohort | personal | sealed.
+# Example for an operator who prefers the legacy v1.0 labels in their deploy:
+#   TIER_ALIASES_JSON = '{"intimate":"personal","sacred":"sealed"}'
+# When set, validateScopeClaim() accepts BOTH canonical names and the aliased
+# labels on input, normalizing to canonical internally. Operators can change
+# display labels without forking the protocol.
+# TIER_ALIASES_JSON = ''
+
 [[d1_databases]]
 binding = "DB"
 database_name = "mycelia-db"
@@ -20,23 +30,12 @@ binding = "KV"
 id = "4be87b971aa44128a9f2cdeccd4306b8"
 
 
-# Service Bindings — directed-synchronous fleet RPC (Step 5 2026-05-18)
-# 3 of 4 workers wired: mirror, gemini, mistral. Brook deferred (DO, different shape).
-# Spec: docs/specs/WORKER_ENTRYPOINT_SHAPE.md
-[[services]]
-binding = "MIRROR"
-service = "mirror-worker"
-entrypoint = "MirrorApi"
-
-[[services]]
-binding = "GEMINI"
-service = "gemini-worker"
-entrypoint = "GeminiApi"
-
-[[services]]
-binding = "MISTRAL"
-service = "mistral-worker"
-entrypoint = "MistralApi"
+# Operator-wires-own fleet bindings: community Mycelia ships WITHOUT [[services]]
+# bindings. Operators who run a private fleet of workers + want directed-RPC across
+# them can add [[services]] entries here pointing at their own workers, and mount
+# a router on /v1/fleet in src/index.ts (see docs/specs/WORKER_ENTRYPOINT_SHAPE.md
+# § Operator-wires-own pattern). Rob's fork (Northwoods Sentinel) keeps an example
+# implementation; the upstream stays substrate-only.
 
 
 # Cron trigger for timeouts/expiry

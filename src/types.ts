@@ -8,6 +8,15 @@ export interface Env {
   R2_AUDIT?: R2Bucket; // Optional — enable R2 in CF dashboard first
   ENVIRONMENT: string;
   ADMIN_API_KEY?: string;
+  /**
+   * Optional operator-chosen tier label aliases.
+   * JSON object mapping aliased label → canonical tier name.
+   * Example: '{"intimate":"personal","sacred":"sealed"}'
+   * Lets operators accept legacy or preferred labels on input without forking
+   * the protocol. Canonical names are public/cohort/personal/sealed.
+   * See docs/specs/MYCELIA_ENVELOPE.md § Tier aliasing.
+   */
+  TIER_ALIASES_JSON?: string;
 }
 
 // ═══ Database Entities ═══
@@ -222,7 +231,7 @@ export interface CreateRequestInput {
   // When `target_agent_id` is set, only that agent may claim.
   // When null/absent, request is open (v1.0 behavior).
   target_agent_id?: string;
-  // Required in v1.1 (grace period: tolerated absent w/ warning during rollout)
+  // Required in v1.1 (grace period closed 2026-06-14 — hard SCOPE_CLAIM_REQUIRED).
   scope_claim?: unknown; // validated by validateScopeClaim()
 }
 
@@ -236,7 +245,7 @@ export interface CreateResponseInput {
   confidence?: number;
   parent_response_id?: string;
   // v1.1 — responder declares the highest tier of content in body
-  body_tier?: 'public' | 'cohort' | 'intimate' | 'sacred';
+  body_tier?: 'public' | 'cohort' | 'personal' | 'sealed';
 }
 
 export interface CreateRatingInput {

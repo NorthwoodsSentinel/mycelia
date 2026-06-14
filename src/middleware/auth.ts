@@ -127,8 +127,9 @@ export const requireAgentKey = createMiddleware<{ Bindings: { KV: KVNamespace };
           meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() }
         }, 403);
       }
-    } catch {
-      // Fail open on KV error to avoid full-fleet outage; audit catches drift.
+    } catch (e) {
+      // Fail open on KV error to avoid full-fleet outage, but log so drift is visible.
+      console.error(`[mycelia auth] revocation check failed for agent ${auth.agent_id}, failing open:`, e);
     }
 
     await next();

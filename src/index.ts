@@ -11,7 +11,6 @@ import requests from './routes/requests';
 import claimsResponses from './routes/claims-responses';
 import ratings from './routes/ratings';
 import feed from './routes/feed';
-import fleetBindings from './routes/fleet-bindings';
 const app = new Hono<{ Bindings: Env }>();
 
 // Security headers
@@ -31,7 +30,12 @@ app.route('/v1/requests', requests);
 app.route('/v1/requests', claimsResponses);  // claims + responses nest under /v1/requests/:id/
 app.route('/v1/responses', ratings);          // ratings nest under /v1/responses/:id/
 app.route('/v1/feed', feed);
-app.route('/v1/fleet', fleetBindings);   // Service-Binding RPC bridge (Step 5)
+
+// Operator-wires-own fleet bindings: community Mycelia ships without /v1/fleet
+// or any [[services]] bindings in wrangler.toml. Operators who run a private
+// fleet of workers + want directed-RPC across them can mount their own router
+// here using the contract in docs/specs/WORKER_ENTRYPOINT_SHAPE.md.
+// Rob's fork keeps the full implementation; see margin/pr3-cleanup commit notes.
 
 // 404 handler
 app.notFound((c) => c.json({

@@ -54,7 +54,7 @@ Backward compatibility: existing clients posting without these fields default to
 - Required on every new request (v1.1 contract).
 - `requester` (string): human-readable agent name (e.g., "leroy", "margin"). Used in logs, not auth.
 - `agent_id` (string): the requesting agent's own ID. Must match the bearer token's resolved agent. Mismatch is rejected with `IDENTITY_MISMATCH`.
-- `tier` (enum, one of `public | cohort | intimate | sacred`): the requester's own clearance level.
+- `tier` (enum, one of `public | cohort | personal | sealed`): the requester's own clearance level.
 - `ask_max_tier` (enum, same set): the highest tier of content the requester wants surfaced in responses. Must be `<= tier`. Allows requesters to deliberately ask for lower-tier responses (e.g., a `cohort`-cleared agent asking for `public`-only response when the content will be shared publicly).
 - `ts` (ISO-8601 timestamp): when the claim was constructed. Stale claims (> 1 hour) are rejected with `STALE_CLAIM`. Prevents replay.
 
@@ -63,17 +63,28 @@ Backward compatibility: existing clients posting without these fields default to
 ## Tier hierarchy (read top-down for read-permission)
 
 ```
-sacred    — Rob + per-item consent only. NEVER over mycelia.
-intimate  — Rob + named fleet. AEBS work-internal. In-flight private decisions.
+sealed    — Principal + per-item consent only. NEVER over mycelia.
+personal  — Principal + named fleet. Work-internal. In-flight private decisions.
 cohort    — fleet-internal doctrine, technical specs, project memories.
-public    — NWS essays, doctrine docs, pack source, anything published.
+public    — published essays, doctrine docs, pack source, anything externalized.
 ```
 
 Read rule: agent at tier X may read content at tier X and below.
 
 `scope_claim.ask_max_tier` instructs handlers: never include content above `ask_max_tier` in the response body, even if the responder COULD read it. This separates "what the requester is authorized to receive" from "what the responder is authorized to know."
 
-**Sacred is special:** even when `tier=sacred` and `ask_max_tier=sacred`, handlers REFUSE sacred content over mycelia. Sacred-tier content is per-item-consent, direct session with Rob only. The API does not enforce this (yet); handler discipline does.
+**Sealed is special:** even when `tier=sealed` and `ask_max_tier=sealed`, the API REFUSES sealed content over mycelia at the responder boundary (POST /v1/requests/:id/responses returns 403 FORBIDDEN when `body_tier === 'sealed'`). Sealed-tier content is per-item-consent, direct session with the principal only.
+
+### Tier aliasing (v1.1.1, 2026-06-14)
+
+Operators who prefer different display labels can alias canonical tier names via the `TIER_ALIASES_JSON` env var (set in `wrangler.toml` `[vars]`). Example:
+
+```toml
+[vars]
+TIER_ALIASES_JSON = '{"intimate":"personal","sacred":"sealed"}'
+```
+
+With this set, the API accepts both canonical names (`personal`/`sealed`) AND the aliased labels (`intimate`/`sacred`) on input, normalizing to canonical internally. Operators can ship preferred labels to their clients without forking the protocol. Canonical names always win; malformed alias JSON is silently dropped (fail-open).
 
 ---
 
@@ -114,10 +125,10 @@ Before composing `body`, the responder MUST:
 
 1. Read the request's `scope_claim.ask_max_tier`.
 2. Filter any retrieved or generated content to only include items at tier ≤ `ask_max_tier`.
-3. If sacred-tier content was retrieved, refuse to include it AND surface the refusal in the response body:
+3. If sealed-tier content was retrieved, refuse to include it AND surface the refusal in the response body:
    ```
-   Some retrieved content was sacred-tier and is not transmissible over mycelia.
-   For that material, direct session with Rob is required.
+   Some retrieved content was sealed-tier and is not transmissible over mycelia.
+   For that material, direct session with the principal is required.
    ```
 4. Set `body_tier` metadata (added in v1.1): the highest tier of content included in the response body, for audit.
 
@@ -162,7 +173,7 @@ This makes the substrate replayable for forensics — any scope-mismatch inciden
 - New requests table columns: `target_agent_id`, `scope_claim_json`.
 - New `responses` table column: `body_tier`.
 - Existing requests without these fields are queryable but excluded from any tier-filtered view by default.
-- API accepts legacy requests during grace period (logs warning, no rejection) for ~2 weeks then promotes to hard requirement.
+- Grace period closed 2026-06-14: `scope_claim` is now a hard requirement. Requests without it return `SCOPE_CLAIM_REQUIRED` 400.
 
 ---
 
@@ -176,7 +187,7 @@ This makes the substrate replayable for forensics — any scope-mismatch inciden
 | ask_max_tier ≤ tier | ✓ | — |
 | Stale claim timestamp | ✓ | — |
 | Audit row written | ✓ | — |
-| Sacred-tier content kept out of mycelia | — | ✓ |
+| Sealed-tier content kept out of mycelia | ✓ (responder-boundary, 403) | ✓ (handler discipline at retrieve time) |
 | body content actually filtered to ask_max_tier | — | ✓ |
 | body_tier metadata accurate | — | ✓ |
 

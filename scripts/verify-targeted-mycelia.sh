@@ -12,7 +12,7 @@
 #   4. Leroy claims the targeted request → 201
 #   5. Leroy responds with body_tier=cohort → 201
 #   6. New request without scope_claim still works (grace period) → 201
-#   7. Request with sacred body_tier on response → 403
+#   7. Request with sealed body_tier on response → 403
 #   8. Stale scope_claim (1h+ old) → 400 STALE_CLAIM
 #   9. ask_max_tier > tier in scope_claim → 400 ASK_EXCEEDS_TIER
 #   10. Identity mismatch (claim says you're someone else) → 400 IDENTITY_MISMATCH
@@ -163,9 +163,9 @@ else
   fail "Legacy request rejected: $RESP"
 fi
 
-# ─── Test 7: sacred body_tier on response → 403 ──────────────────────────────
+# ─── Test 7: sealed body_tier on response → 403 ──────────────────────────────
 echo ""
-echo "Test 7: Sacred body_tier on response"
+echo "Test 7: Sealed body_tier on response"
 if [ -n "$REQ2_ID" ]; then
   curl -s -X POST "$API_BASE/v1/requests/$REQ2_ID/claims" \
     -H "Authorization: Bearer $LEROY_KEY" \
@@ -174,12 +174,12 @@ if [ -n "$REQ2_ID" ]; then
   RESP=$(curl -s -X POST "$API_BASE/v1/requests/$REQ2_ID/responses" \
     -H "Authorization: Bearer $LEROY_KEY" \
     -H "Content-Type: application/json" \
-    -d '{"body": "This should be refused — sacred over mycelia", "body_tier": "sacred"}')
+    -d '{"body": "This should be refused — sealed over mycelia", "body_tier": "sealed"}')
   CODE=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error',{}).get('code',''))" 2>/dev/null)
   if [ "$CODE" = "FORBIDDEN" ]; then
-    pass "Sacred body_tier correctly refused"
+    pass "Sealed body_tier correctly refused"
   else
-    fail "Expected FORBIDDEN sacred refusal, got: $RESP"
+    fail "Expected FORBIDDEN sealed refusal, got: $RESP"
   fi
 fi
 
@@ -223,14 +223,14 @@ RESP=$(curl -s -X POST "$API_BASE/v1/requests" \
 import json
 body = {
   'title': 'verify-test: ask exceeds tier',
-  'body': 'Should reject. Margin claims tier=public but asks for sacred. Privilege escalation attempt.',
+  'body': 'Should reject. Margin claims tier=public but asks for sealed. Privilege escalation attempt.',
   'request_type': 'second-opinion',
   'tags': ['copy-review'],
   'scope_claim': {
     'requester': 'margin',
     'agent_id': '$MARGIN_ID',
     'tier': 'public',
-    'ask_max_tier': 'sacred',
+    'ask_max_tier': 'sealed',
     'ts': '$NOW_ISO'
   }
 }

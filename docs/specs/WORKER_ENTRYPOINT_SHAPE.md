@@ -49,13 +49,13 @@ export class MirrorApi extends WorkerEntrypoint<Env> {
     // 4. Apply scope filter — drop any content tier above ask_max_tier
     const filtered = filterByTier(raw, v.claim.ask_max_tier);
 
-    // 5. Sacred-tier content never goes over fleet wire
+    // 5. Sealed-tier content never goes over fleet wire
     if (refusalRequiredForMycelia(filtered.body_tier)) {
       return {
         ok: false,
         error: {
-          code: 'SACRED_REFUSAL',
-          message: 'Some matched content was sacred-tier; direct Rob session required.',
+          code: 'SEALED_REFUSAL',
+          message: 'Some matched content was sealed-tier; direct principal session required.',
         },
       };
     }
@@ -131,19 +131,31 @@ export interface AuditCallEntry {
 
 ---
 
-## wrangler.jsonc additions
+## wrangler.toml additions (operator-wires-own pattern, v1.1.1)
 
-In the **caller's** wrangler config (e.g., `mycelia-api`):
+**Community Mycelia ships WITHOUT any `[[services]]` bindings.** Operators who run a private fleet of workers and want directed-RPC across them add the bindings in their own `wrangler.toml` and mount a router on `/v1/fleet` in their own fork of `src/index.ts`. Example operator config:
 
-```jsonc
-{
-  "services": [
-    { "binding": "MIRROR", "service": "mirror-worker", "entrypoint": "MirrorApi" },
-    { "binding": "GEMINI", "service": "gemini-worker", "entrypoint": "GeminiApi" },
-    { "binding": "MISTRAL", "service": "mistral-worker", "entrypoint": "MistralApi" },
-    { "binding": "BROOK", "service": "brook", "entrypoint": "BrookApi" }
-  ]
-}
+```toml
+# Operator's own wrangler.toml (after forking or via overlay)
+[[services]]
+binding = "MIRROR"
+service = "mirror-worker"
+entrypoint = "MirrorApi"
+
+[[services]]
+binding = "GEMINI"
+service = "gemini-worker"
+entrypoint = "GeminiApi"
+
+[[services]]
+binding = "MISTRAL"
+service = "mistral-worker"
+entrypoint = "MistralApi"
+
+[[services]]
+binding = "BROOK"
+service = "brook"
+entrypoint = "BrookApi"
 ```
 
 Call site:
@@ -167,7 +179,7 @@ In each **target Worker** (mirror-worker, gemini-worker, etc.), no special wrang
 | `ASK_EXCEEDS_TIER` | ask_max_tier > tier |
 | `STALE_CLAIM` | scope.ts is more than 1 hour old |
 | `VALIDATION_ERROR` | question length/shape invalid |
-| `SACRED_REFUSAL` | matched content was sacred-tier; refused at fleet boundary |
+| `SEALED_REFUSAL` | matched content was sealed-tier; refused at fleet boundary |
 | `MODEL_ERROR` | inference failure (caller can retry) |
 | `INTERNAL_ERROR` | unexpected; caller should not retry |
 
@@ -176,7 +188,7 @@ The `ok: true | false` discriminant lets the caller pattern-match cleanly:
 ```typescript
 const r = await env.MIRROR.ask(scope, q);
 if (!r.ok) {
-  if (r.error.code === 'SACRED_REFUSAL') { /* surface to Rob */ }
+  if (r.error.code === 'SEALED_REFUSAL') { /* surface to principal */ }
   else { /* log + retry-or-fail */ }
 } else {
   // use r.body

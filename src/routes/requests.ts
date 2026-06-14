@@ -6,7 +6,7 @@ import { parsePagination, paginatedQuery } from '../lib/db';
 import { success, error, generateId, now } from '../lib/utils';
 import { afterCancel, InvalidTransitionError } from '../models/state-machine';
 import { rateLimit } from '../middleware/rate-limit';
-import { validateScopeClaim } from '../lib/scope-claim';
+import { validateScopeClaim, parseTierAliases } from '../lib/scope-claim';
 
 const requests = new Hono<{ Bindings: Env; Variables: { auth: AuthContext } }>();
 
@@ -76,26 +76,18 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
     capabilityIds.push(cap.id);
   }
 
-  // v1.1 — validate scope_claim (required after grace period; tolerated absent during rollout)
-  let scopeClaimJson: string | null = null;
-  if (input.scope_claim !== undefined && input.scope_claim !== null) {
-    const v = validateScopeClaim(input.scope_claim, auth.agent_id);
+  // v1.1 — scope_claim required (grace period closed 2026-06-14; target was 2026-06-01).
+  let scopeClaimJson: string;
+  if (input.scope_claim === undefined || input.scope_claim === null) {
+    return c.json(error('SCOPE_CLAIM_REQUIRED', 'scope_claim is required in v1.1; see docs/specs/MYCELIA_ENVELOPE.md', 400).body, 400);
+  }
+  {
+    const tierAliases = parseTierAliases(c.env.TIER_ALIASES_JSON);
+    const v = validateScopeClaim(input.scope_claim, auth.agent_id, Date.now(), tierAliases);
     if (!v.ok) {
       return c.json(error(v.code, v.message, 400).body, 400);
     }
     scopeClaimJson = JSON.stringify(v.claim);
-  } else {
-    // Grace period: synthesize a public-tier claim for legacy clients, log a warning.
-    // After 2-week grace period (target 2026-06-01), promote to hard SCOPE_CLAIM_REQUIRED.
-    scopeClaimJson = JSON.stringify({
-      requester: 'legacy-client',
-      agent_id: auth.agent_id,
-      tier: 'public',
-      ask_max_tier: 'public',
-      ts: now(),
-      _grace_synthesized: true,
-    });
-    console.warn(`[mycelia v1.1 grace] request from ${auth.agent_id} missing scope_claim; synthesized public-tier`);
   }
 
   // v1.1 — validate target_agent_id if present (must be a real, active agent)
