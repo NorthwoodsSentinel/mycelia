@@ -12,6 +12,7 @@ import claimsResponses from './routes/claims-responses';
 import ratings from './routes/ratings';
 import feed from './routes/feed';
 import fleetBindings from './routes/fleet-bindings';
+import schemas from './routes/schemas';
 const app = new Hono<{ Bindings: Env }>();
 
 // Security headers
@@ -32,6 +33,7 @@ app.route('/v1/requests', claimsResponses);  // claims + responses nest under /v
 app.route('/v1/responses', ratings);          // ratings nest under /v1/responses/:id/
 app.route('/v1/feed', feed);
 app.route('/v1/fleet', fleetBindings);   // Service-Binding RPC bridge (Step 5)
+app.route('/v1/schemas', schemas);        // Self-describing endpoint body shapes (added 2026-06-27)
 
 // 404 handler
 app.notFound((c) => c.json({
