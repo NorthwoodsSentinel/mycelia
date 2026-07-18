@@ -1,4 +1,4 @@
--- Migration 0005: Add structured coordination fields to requests (v1.2 Tier 2).
+-- Migration 0008 (renumbered from downstream 0005 during v0.2.0 merge): Add structured coordination fields to requests (v1.2 Tier 2).
 --
 -- Per T-059 Tier 2, converged between Margin + CeeCee 2026-07-01:
 --   - references_json  (TEXT, JSON array of prior request IDs this cites)
@@ -12,7 +12,7 @@
 -- Junction tables considered + rejected — overkill at Mycelia bus scale.
 --
 -- Additive migration: all columns NULLABLE, no existing rows affected, no
--- foreign-key dance needed (unlike 0003→0004 request_type CHECK dance).
+-- foreign-key dance needed (unlike 0006→0007 request_type CHECK dance).
 
 ALTER TABLE requests ADD COLUMN references_json  TEXT;
 ALTER TABLE requests ADD COLUMN supersedes       TEXT;

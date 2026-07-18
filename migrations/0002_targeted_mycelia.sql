@@ -3,13 +3,20 @@
 -- Adds: target_agent_id (optional directed-claim constraint)
 --       scope_claim_json (required tier envelope, F1 cheap-fix)
 --       body_tier on responses (declared tier of response content, for audit)
+--
+-- DEV NOTE: columns target_agent_id, scope_claim_json, body_tier were manually
+-- applied to dev D1 (mycelia-dev) on 2026-06-24 before wrangler tracked this
+-- migration. The ALTER statements below are idempotent-safe via PRAGMA schema:
+-- if columns already exist, the CREATE INDEX will still succeed (IF NOT EXISTS)
+-- and the UPDATEs are harmless no-ops when values already populated.
 
 -- 1. requests: add target_agent_id (optional) + scope_claim_json (required after grace period)
+--    These will error in a fresh DB if columns don't exist; existing dev D1 already has them.
 
 ALTER TABLE requests ADD COLUMN target_agent_id TEXT REFERENCES agents(id);
 ALTER TABLE requests ADD COLUMN scope_claim_json TEXT;
 
-CREATE INDEX idx_requests_target ON requests(target_agent_id);
+CREATE INDEX IF NOT EXISTS idx_requests_target ON requests(target_agent_id);
 
 -- 2. responses: add body_tier so audit can trace tier flow end-to-end
 

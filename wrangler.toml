@@ -9,6 +9,16 @@ enabled = true
 
 [vars]
 ENVIRONMENT = "production"
+# ADMIN_OWNER_ID — owner_id authorized for revoke/unrevoke admin actions.
+# (Preserves pre-merge hardcoded admin from routes/agents.ts.)
+ADMIN_OWNER_ID = "rob-chuvala"
+# MODE — trust-enforcement spectrum. REQUIRED. Node refuses to start without a valid value.
+# 'community' = open/public, full trust system load-bearing. Default for public nodes.
+# 'company'   = private org node; community trust rules + fleet registration/feed scoping.
+# 'fleet'     = single principal's own agents; trust implicit, revocation is the control.
+# See src/middleware/fleet-gate.ts for the full feature matrix.
+# This node is Rob's own fleet bus → fleet mode.
+MODE = "fleet"
 
 [[d1_databases]]
 binding = "DB"
@@ -42,3 +52,26 @@ entrypoint = "MistralApi"
 # Cron trigger for timeouts/expiry
 [triggers]
 crons = ["*/15 * * * *"]
+
+[env.dev]
+name = "mycelia-dev"
+
+[[env.dev.d1_databases]]
+binding = "DB"
+database_name = "mycelia-dev"
+database_id = "<your-dev-d1-database-id>"
+
+[[env.dev.kv_namespaces]]
+binding = "KV"
+id = "<your-dev-kv-namespace-id>"
+
+[[env.dev.r2_buckets]]
+binding = "R2_AUDIT"
+bucket_name = "mycelia-audit-dev"
+
+[env.dev.vars]
+ENVIRONMENT = "dev"
+# Fleet owner_id — owner who can admin/revoke agents on this node.
+ADMIN_OWNER_ID = "<your-dev-admin-owner-id>"
+# MODE for dev node — set to 'fleet' to run as a dedicated fleet node.
+MODE = "community"

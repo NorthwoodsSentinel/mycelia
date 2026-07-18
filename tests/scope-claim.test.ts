@@ -54,7 +54,7 @@ describe('validateScopeClaim', () => {
 
   it('rejects ask_max_tier > tier', () => {
     const r = validateScopeClaim(
-      { ...validClaim, tier: 'public', ask_max_tier: 'sacred' },
+      { ...validClaim, tier: 'public', ask_max_tier: 'sealed' },
       'pai-leroy-mn4ol0k6',
       NOW,
     );
@@ -64,7 +64,7 @@ describe('validateScopeClaim', () => {
 
   it('allows ask_max_tier < tier', () => {
     const r = validateScopeClaim(
-      { ...validClaim, tier: 'sacred', ask_max_tier: 'public' },
+      { ...validClaim, tier: 'sealed', ask_max_tier: 'public' },
       'pai-leroy-mn4ol0k6',
       NOW,
     );
@@ -110,12 +110,12 @@ describe('permits', () => {
     expect(permits('cohort', 'cohort')).toBe(true);
   });
   it('permits higher tier reading lower', () => {
-    expect(permits('sacred', 'public')).toBe(true);
-    expect(permits('intimate', 'cohort')).toBe(true);
+    expect(permits('sealed', 'public')).toBe(true);
+    expect(permits('personal', 'cohort')).toBe(true);
   });
   it('denies lower tier reading higher', () => {
     expect(permits('public', 'cohort')).toBe(false);
-    expect(permits('cohort', 'sacred')).toBe(false);
+    expect(permits('cohort', 'sealed')).toBe(false);
   });
 });
 
@@ -123,14 +123,14 @@ describe('compareTiers', () => {
   it('orders correctly', () => {
     expect(compareTiers('public', 'cohort')).toBeLessThan(0);
     expect(compareTiers('cohort', 'cohort')).toBe(0);
-    expect(compareTiers('sacred', 'public')).toBeGreaterThan(0);
+    expect(compareTiers('sealed', 'public')).toBeGreaterThan(0);
   });
 });
 
 describe('refusalRequiredForMycelia', () => {
   it('only refuses sacred', () => {
-    expect(refusalRequiredForMycelia('sacred')).toBe(true);
-    expect(refusalRequiredForMycelia('intimate')).toBe(false);
+    expect(refusalRequiredForMycelia('sealed')).toBe(true);
+    expect(refusalRequiredForMycelia('personal')).toBe(false);
     expect(refusalRequiredForMycelia('cohort')).toBe(false);
     expect(refusalRequiredForMycelia('public')).toBe(false);
   });
@@ -149,7 +149,7 @@ describe('buildScopeClaim', () => {
     const c = buildScopeClaim({
       requesterName: 'leroy',
       agentId: 'pai-leroy-mn4ol0k6',
-      tier: 'sacred',
+      tier: 'sealed',
       askMaxTier: 'public',
     });
     expect(c.ask_max_tier).toBe('public');

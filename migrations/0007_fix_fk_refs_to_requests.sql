@@ -1,6 +1,7 @@
--- Migration 0004: Fix foreign-key references after migration 0003.
+-- Migration 0007 (renumbered from downstream 0004 during v0.2.0 merge):
+-- Fix foreign-key references after migration 0006 (was 0003 downstream).
 --
--- Migration 0003 (widen request_type CHECK) rebuilt the `requests` table using
+-- Migration 0006 (widen request_type CHECK) rebuilt the `requests` table using
 -- the SQLite ALTER-CHECK dance (rename → create → copy → drop → rename).
 -- But `request_tags`, `claims`, and `responses` still hold their original
 -- FK definitions pointing at "requests_v11"(id) — the renamed-then-dropped
@@ -47,6 +48,12 @@ DROP TABLE claims_broken;
 CREATE INDEX IF NOT EXISTS idx_claims_request ON claims(request_id);
 CREATE INDEX IF NOT EXISTS idx_claims_agent ON claims(agent_id);
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
+-- Re-create the partial unique index from migration 0003 (upstream): rebuilding
+-- `claims` via rename→drop discards indexes attached to the old table, so the
+-- "one ACTIVE claim per (request, agent)" invariant must be restored here.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_request_agent_active
+  ON claims(request_id, agent_id)
+  WHERE status = 'active';
 
 -- ─── responses ───────────────────────────────────────────────────────
 -- responses had ALTER TABLE additions after 0001 (body_tier column from v1.1

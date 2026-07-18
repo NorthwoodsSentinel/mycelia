@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env, AuthContext, CreateRequestInput, RequestType, Priority } from '../types';
 import { authMiddleware, requireAgentKey } from '../middleware/auth';
+import { isScopeClaimEnforced, type NodeMode } from '../middleware/fleet-gate';
 import { writeAuditLog } from '../lib/audit';
 import { parsePagination, paginatedQuery } from '../lib/db';
 import { success, error, generateId, now } from '../lib/utils';
@@ -110,7 +111,10 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
     capabilityIds.push(cap.id);
   }
 
-  // v1.1 — validate scope_claim (required after grace period; tolerated absent during rollout)
+  // v1.1 — validate scope_claim.
+  // fleet/company: strictly required (grace period closed; every request must carry an identity envelope).
+  // community: grace period still active — absent claim synthesized as public-tier with a warning.
+  const mode = (c.env.MODE ?? 'community') as NodeMode;
   let scopeClaimJson: string | null = null;
   if (input.scope_claim !== undefined && input.scope_claim !== null) {
     const v = validateScopeClaim(input.scope_claim, auth.agent_id);
@@ -118,9 +122,14 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
       return c.json(error(v.code, v.message, 400).body, 400);
     }
     scopeClaimJson = JSON.stringify(v.claim);
+  } else if (isScopeClaimEnforced(mode)) {
+    // fleet/company: grace period is closed — hard reject absent scope_claim.
+    return c.json(
+      error('SCOPE_CLAIM_REQUIRED', `scope_claim is required on this node (MODE=${mode}). Include a valid scope envelope with your request.`, 400).body,
+      400
+    );
   } else {
-    // Grace period: synthesize a public-tier claim for legacy clients, log a warning.
-    // After 2-week grace period (target 2026-06-01), promote to hard SCOPE_CLAIM_REQUIRED.
+    // community: grace period — synthesize a public-tier claim for legacy clients, log a warning.
     scopeClaimJson = JSON.stringify({
       requester: 'legacy-client',
       agent_id: auth.agent_id,
@@ -176,66 +185,76 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
   const timestamp = now();
   const expiresAt = new Date(Date.now() + expiresInHours * 3600 * 1000).toISOString();
 
-  // Insert request row (v1.1: target_agent_id + scope_claim_json; v1.2: 5 structured coordination fields)
-  await c.env.DB.prepare(`
-    INSERT INTO requests (id, requester_id, title, body, request_type, priority,
-                          max_responses, context, expires_at, created_at, updated_at,
-                          target_agent_id, scope_claim_json,
-                          references_json, supersedes, artifacts_json, action_required, blocking)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    id,
-    auth.agent_id,
-    input.title,
-    input.body,
-    input.request_type,
-    priority,
-    maxResponses,
-    input.context ?? null,
-    expiresAt,
-    timestamp,
-    timestamp,
-    targetAgentId,
-    scopeClaimJson,
-    referencesJson.value,
-    input.supersedes ?? null,
-    artifactsJson.value,
-    actionRequired,
-    input.blocking ?? null
-  ).run();
-
-  // Insert request_tags rows
+  // Atomic batch: INSERT requests (v1.1: target_agent_id + scope_claim_json;
+  // v1.2: 5 structured coordination fields) + INSERT request_tags + UPDATE agents
+  // request_count. D1's batch() wraps these in an implicit transaction — all
+  // succeed or all roll back (B7 fix preserved).
+  const batchStatements = [
+    c.env.DB.prepare(`
+      INSERT INTO requests (id, requester_id, title, body, request_type, priority,
+                            max_responses, context, expires_at, created_at, updated_at,
+                            target_agent_id, scope_claim_json,
+                            references_json, supersedes, artifacts_json, action_required, blocking)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      id,
+      auth.agent_id,
+      input.title,
+      input.body,
+      input.request_type,
+      priority,
+      maxResponses,
+      input.context ?? null,
+      expiresAt,
+      timestamp,
+      timestamp,
+      targetAgentId,
+      scopeClaimJson,
+      referencesJson.value,
+      input.supersedes ?? null,
+      artifactsJson.value,
+      actionRequired,
+      input.blocking ?? null
+    ),
+  ];
   for (const capId of capabilityIds) {
-    await c.env.DB.prepare(
-      'INSERT INTO request_tags (request_id, capability_id) VALUES (?, ?)'
-    ).bind(id, capId).run();
+    batchStatements.push(
+      c.env.DB.prepare(
+        'INSERT INTO request_tags (request_id, capability_id) VALUES (?, ?)'
+      ).bind(id, capId)
+    );
   }
+  batchStatements.push(
+    c.env.DB.prepare(
+      'UPDATE agents SET request_count = request_count + 1 WHERE id = ?'
+    ).bind(auth.agent_id)
+  );
+  await c.env.DB.batch(batchStatements);
 
-  // Increment agent's request_count
-  await c.env.DB.prepare(
-    'UPDATE agents SET request_count = request_count + 1 WHERE id = ?'
-  ).bind(auth.agent_id).run();
-
-  await writeAuditLog(c.env.DB, c.env.KV, {
-    event_type: 'request.created',
-    actor_id: auth.agent_id,
-    target_type: 'request',
-    target_id: id,
-    detail: {
-      title: input.title,
-      type: input.request_type,
-      tags: input.tags,
-      // v1.1 audit fields
-      target_agent_id: targetAgentId,
-      scope_claim: scopeClaimJson ? JSON.parse(scopeClaimJson) : null,
-      // v1.2 audit fields — coordination graph shape
-      references: input.references ?? null,
-      supersedes: input.supersedes ?? null,
-      artifacts: input.artifacts ?? null,
-      action_required: actionRequired,
-      blocking: input.blocking ?? null,
-    }
-  });
+  try {
+    await writeAuditLog(c.env.DB, c.env.KV, {
+      event_type: 'request.created',
+      actor_id: auth.agent_id,
+      target_type: 'request',
+      target_id: id,
+      detail: {
+        title: input.title,
+        type: input.request_type,
+        tags: input.tags,
+        // v1.1 audit fields
+        target_agent_id: targetAgentId,
+        scope_claim: scopeClaimJson ? JSON.parse(scopeClaimJson) : null,
+        // v1.2 audit fields — coordination graph shape
+        references: input.references ?? null,
+        supersedes: input.supersedes ?? null,
+        artifacts: input.artifacts ?? null,
+        action_required: actionRequired,
+        blocking: input.blocking ?? null,
+      }
+    });
+  } catch (auditErr) {
+    console.error('[requests] writeAuditLog failed after committed request', id, auditErr);
+  }
 
   return c.json(success({ request: { id, status: 'open', created_at: timestamp } }), 201);
 });

@@ -4,6 +4,7 @@
 import { Hono } from 'hono';
 import type { Env, AuthContext, CreateClaimInput, CreateResponseInput, HelpRequest, Claim } from '../types';
 import { authMiddleware, requireAgentKey } from '../middleware/auth';
+import { isTrustGateRelaxed, type NodeMode } from '../middleware/fleet-gate';
 import { rateLimit } from '../middleware/rate-limit';
 import { writeAuditLog } from '../lib/audit';
 import { success, error, generateId, now } from '../lib/utils';
@@ -76,8 +77,11 @@ claimsResponses.post('/:id/claims', rateLimit('claim.create'), async (c) => {
     );
   }
 
-  // Constraint 5: High-priority requires trust_score >= 0.6
-  if (request.priority === 'high') {
+  // Constraint 5: High-priority requires trust_score >= 0.6.
+  // In fleet mode the trust gate is relaxed — all agents are the owner's own, trust is implicit.
+  // company + community: gate remains load-bearing.
+  const mode = (c.env.MODE ?? 'community') as NodeMode;
+  if (request.priority === 'high' && !isTrustGateRelaxed(mode)) {
     const agent = await c.env.DB.prepare(
       'SELECT trust_score FROM agents WHERE id = ?'
     ).bind(auth.agent_id).first<{ trust_score: number }>();
@@ -123,39 +127,46 @@ claimsResponses.post('/:id/claims', rateLimit('claim.create'), async (c) => {
 
   const claimId = generateId();
 
-  await c.env.DB.prepare(`
-    INSERT INTO claims (id, request_id, agent_id, estimated_minutes, note, claimed_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    claimId,
-    requestId,
-    auth.agent_id,
-    estimatedMinutes,
-    input.note ?? null,
-    claimedAt,
-    expiresAt
-  ).run();
-
-  // Transition request status (open → claimed, or claimed → claimed)
+  // Compute state-machine transition BEFORE entering the batch.
   const newStatus = afterClaimCreated(request.status);
-  await c.env.DB.prepare(
-    'UPDATE requests SET status = ?, updated_at = ? WHERE id = ?'
-  ).bind(newStatus, now(), requestId).run();
 
-  await writeAuditLog(c.env.DB, c.env.KV, {
-    event_type: 'request.claimed',
-    actor_id: auth.agent_id,
-    target_type: 'claim',
-    target_id: claimId,
-    detail: {
-      request_id: requestId,
-      estimated_minutes: estimatedMinutes,
-      expires_at: expiresAt,
-      // v1.1 audit
-      target_agent_id: request.target_agent_id,
-      was_directed: request.target_agent_id != null,
-    },
-  });
+  // Atomic batch: INSERT claim + UPDATE request status (B5 fix preserved).
+  await c.env.DB.batch([
+    c.env.DB.prepare(`
+      INSERT INTO claims (id, request_id, agent_id, estimated_minutes, note, claimed_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      claimId,
+      requestId,
+      auth.agent_id,
+      estimatedMinutes,
+      input.note ?? null,
+      claimedAt,
+      expiresAt
+    ),
+    c.env.DB.prepare(
+      'UPDATE requests SET status = ?, updated_at = ? WHERE id = ?'
+    ).bind(newStatus, now(), requestId),
+  ]);
+
+  try {
+    await writeAuditLog(c.env.DB, c.env.KV, {
+      event_type: 'request.claimed',
+      actor_id: auth.agent_id,
+      target_type: 'claim',
+      target_id: claimId,
+      detail: {
+        request_id: requestId,
+        estimated_minutes: estimatedMinutes,
+        expires_at: expiresAt,
+        // v1.1 audit
+        target_agent_id: request.target_agent_id,
+        was_directed: request.target_agent_id != null,
+      },
+    });
+  } catch (auditErr) {
+    console.error('[claims] writeAuditLog failed after committed claim', claimId, auditErr);
+  }
 
   return c.json(
     success({
@@ -263,19 +274,16 @@ claimsResponses.post('/:id/responses', rateLimit('response.create'), async (c) =
 
     claimId = claim.id;
 
-    // Mark claim as completed
-    await c.env.DB.prepare(
-      `UPDATE claims SET status = 'completed', completed_at = ? WHERE id = ?`
-    ).bind(now(), claimId).run();
+    // claim-mark-completed goes into the batch below (B1/B4 fix: no zombie claims)
   }
 
   const responseId = generateId();
   const createdAt = now();
 
   // v1.1 body_tier: responder declares the highest tier of content in body.
-  // Validated against enum; sacred refused at fleet boundary.
-  const validTiers = ['public', 'cohort', 'intimate', 'sacred'] as const;
-  const tierRank = { public: 0, cohort: 1, intimate: 2, sacred: 3 } as const;
+  // Validated against enum; sealed refused at fleet boundary.
+  const validTiers = ['public', 'cohort', 'personal', 'sealed'] as const;
+  const tierRank = { public: 0, cohort: 1, personal: 2, sealed: 3 } as const;
   const bodyTier = input.body_tier ?? 'public';
   if (!validTiers.includes(bodyTier as any)) {
     return c.json(
@@ -283,11 +291,11 @@ claimsResponses.post('/:id/responses', rateLimit('response.create'), async (c) =
       400
     );
   }
-  if (bodyTier === 'sacred') {
+  if (bodyTier === 'sealed') {
     return c.json(
       error(
         'FORBIDDEN',
-        'sacred-tier content cannot be transmitted over mycelia; direct Rob session required',
+        'sealed-tier content cannot be transmitted over mycelia; direct Rob session required',
         403
       ).body,
       403
@@ -317,47 +325,62 @@ claimsResponses.post('/:id/responses', rateLimit('response.create'), async (c) =
     }
   }
 
-  await c.env.DB.prepare(`
-    INSERT INTO responses (id, request_id, responder_id, claim_id, parent_response_id, body, confidence, created_at, body_tier)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    responseId,
-    requestId,
-    auth.agent_id,
-    claimId,
-    input.parent_response_id ?? null,
-    input.body,
-    input.confidence ?? null,
-    createdAt,
-    bodyTier
-  ).run();
-
-  // Transition request status and increment response_count
+  // Compute state-machine transition BEFORE entering the batch.
   const newStatus = afterResponseSubmitted(request.status);
-  await c.env.DB.prepare(
-    'UPDATE requests SET status = ?, response_count = response_count + 1, updated_at = ? WHERE id = ?'
-  ).bind(newStatus, now(), requestId).run();
 
-  // Increment agent response_count
-  await c.env.DB.prepare(
-    'UPDATE agents SET response_count = response_count + 1 WHERE id = ?'
-  ).bind(auth.agent_id).run();
+  // Atomic batch: mark claim completed + INSERT response + UPDATE request +
+  // UPDATE agent. D1's batch() wraps all in implicit transaction (B4 fix preserved).
+  // Audit log remains post-batch as best-effort observability.
+  const batchStatements = [
+    c.env.DB.prepare(`
+      INSERT INTO responses (id, request_id, responder_id, claim_id, parent_response_id, body, confidence, created_at, body_tier)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      responseId,
+      requestId,
+      auth.agent_id,
+      claimId,
+      input.parent_response_id ?? null,
+      input.body,
+      input.confidence ?? null,
+      createdAt,
+      bodyTier
+    ),
+    c.env.DB.prepare(
+      'UPDATE requests SET status = ?, response_count = response_count + 1, updated_at = ? WHERE id = ?'
+    ).bind(newStatus, now(), requestId),
+    c.env.DB.prepare(
+      'UPDATE agents SET response_count = response_count + 1 WHERE id = ?'
+    ).bind(auth.agent_id),
+  ];
+  if (claimId) {
+    batchStatements.unshift(
+      c.env.DB.prepare(
+        `UPDATE claims SET status = 'completed', completed_at = ? WHERE id = ?`
+      ).bind(now(), claimId)
+    );
+  }
+  await c.env.DB.batch(batchStatements);
 
-  const eventType = isCouncilFollowUp ? 'response.council_reply' : 'response.created';
-  await writeAuditLog(c.env.DB, c.env.KV, {
-    event_type: eventType,
-    actor_id: auth.agent_id,
-    target_type: 'response',
-    target_id: responseId,
-    detail: {
-      request_id: requestId,
-      claim_id: claimId,
-      parent_response_id: input.parent_response_id ?? null,
-      // v1.1 audit
-      body_tier: bodyTier,
-      request_target_agent_id: request.target_agent_id,
-    },
-  });
+  try {
+    const eventType = isCouncilFollowUp ? 'response.council_reply' : 'response.created';
+    await writeAuditLog(c.env.DB, c.env.KV, {
+      event_type: eventType,
+      actor_id: auth.agent_id,
+      target_type: 'response',
+      target_id: responseId,
+      detail: {
+        request_id: requestId,
+        claim_id: claimId,
+        parent_response_id: input.parent_response_id ?? null,
+        // v1.1 audit
+        body_tier: bodyTier,
+        request_target_agent_id: request.target_agent_id,
+      },
+    });
+  } catch (auditErr) {
+    console.error('[responses] writeAuditLog failed after committed response', responseId, auditErr);
+  }
 
   return c.json(
     success({

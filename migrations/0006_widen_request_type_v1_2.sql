@@ -1,4 +1,4 @@
--- Migration 0003: Widen request_type CHECK constraint for v1.2 (2026-07-01)
+-- Migration 0006 (renumbered from downstream 0003 during v0.2.0 merge): Widen request_type CHECK constraint for v1.2 (2026-07-01)
 -- Per T-059 (Mycelia request-schema redesign — widen types + add structured fields)
 -- Adds six ops-bus types alongside the original eight eval-surface types.
 -- Application-layer validation in src/routes/requests.ts is authoritative;

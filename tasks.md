@@ -1,6 +1,6 @@
 ---
 project: mycelia
-last_updated: 2026-03-23T13:00:00-06:00
+last_updated: 2026-03-24T13:00:00-06:00
 ---
 
 # Project Tasks
@@ -16,17 +16,36 @@ This file tracks tasks for Mycelia in a format compatible with PAI's Task tools.
 - **Active Form**: Preparing live Mycelia demo for GBAIC Meeting #3
 - **Priority**: high
 - **Due**: 2026-03-25
-- **Notes**: Three-platform integration test complete (Claude + Codex + Gemini). Discord bot deployed. Need to rehearse live demo flow. Post to GBAIC Discord today.
+- **Notes**: Three-platform test complete. Blog posted. GBAIC members registering agents. First issue filed and addressed (PR #2). Need to rehearse live demo flow and deploy bot spoiler fix to FabLab.
+
+### Review and merge PR #2 (sanitizer improvements)
+- **Status**: in_progress
+- **Active Form**: Reviewing sanitizer improvements from issue #1
+- **Priority**: high
+- **Notes**: All 6 gaps from Ivy/jcfischer implemented. 174 tests passing. Includes encoding bypass, tool invocation, PII scanning, cross-field aggregation. Branch: feat/sanitizer-improvements-issue-1. Deploy after merge.
 
 ---
 
 ## Pending
 
+### P6 — Fleet Mode + Zero Trust node
+- **Status**: pending
+- **Active Form**: Implement `MODE=fleet|community` + `fleet-gate.ts` + CF Access on a dedicated fleet node
+- **Priority**: high
+- **Notes**: OpenSpec draft at `openspec/changes/mycelia-fleet-mode/proposal.md`. Gated on P6.0 sign-off + 6 open decisions. Branch off `pr8-head` (not main).
+- **Known issues addressed**: see `docs/KNOWN-ISSUES.md` — reads bypass revocation, KV fail-open, grace period past deadline, global feed.
+
+### Three-mode roadmap — Community / Fleet / Company
+- **Status**: pending (design only)
+- **Active Form**: Tracking the long-horizon deployment model split
+- **Priority**: low
+- **Notes**: Documented in `docs/ROADMAP.md`. Community = current; Fleet = P6; Company = future phase when there is a concrete customer. Company follows the Community bot-gated pattern + a managed trust API surface — most weight lives in an external admin/bot layer, not Mycelia core. Aligns with "community-as-package" + "node federation" already in this file. Discuss with Robert before designing.
+
 ### Cognitive Loop #1 — "Why I'm Building Mutual Aid for AI Agents"
 - **Status**: pending
 - **Active Form**: Writing first Cognitive Loop post
 - **Priority**: medium
-- **Notes**: Draft exists at ~/projects/TSFUR/content/drafts/cognitive-loop-01-why-mycelium.md. Needs Wally's edit pass + name update to Mycelia.
+- **Notes**: Draft pending edit pass + name update to Mycelia.
 
 ### Cognitive Loop #2 — Trust Model and Cooperation
 - **Status**: pending
@@ -80,15 +99,47 @@ This file tracks tasks for Mycelia in a format compatible with PAI's Task tools.
 - **Priority**: medium
 - **Notes**: Bill (Codex) and Gemini both recommended exponential decay with 21-day grace period, 45-60 day half-life, floor of 0.1-0.15, per-capability. Current: linear -0.01/week, 30-day grace, 0.3 floor. Worth implementing based on integration test feedback.
 
+### Deploy bot spoiler tag fix to FabLab
+- **Status**: pending
+- **Active Form**: Deploying Discord bot fix to FabLab container 116
+- **Priority**: high
+- **Notes**: Removed spoiler tags from API key DM (embed fields don't render spoilers on all clients). Committed locally in GBAIC repo. Needs scp to FabLab + docker restart gbaic-bot. Handoff created.
+
 ### Community-as-package vision
 - **Status**: pending
 - **Active Form**: Designing Mycelia as deployable per-community package
 - **Priority**: low
 - **Notes**: Each Discord server / community gets its own Mycelia instance. Community membership = trust boundary. GBAIC is the proof-of-concept. Future architecture work.
 
+### Node federation — inter-community cooperation
+- **Status**: pending
+- **Active Form**: Designing protocol for Mycelia nodes to communicate across communities
+- **Priority**: medium
+- **Notes**: Each community (GBAIC, etc.) runs its own Mycelia node with its own trust boundary. Federation lets nodes discover each other and route requests across communities. An agent trusted in GBAIC could claim requests from another community's node, with trust translating across boundaries. This is how the web grows — not one central server, but interconnected community nodes. Design questions: trust portability (does GBAIC trust transfer?), request routing (broadcast vs directed), node discovery (registry vs gossip), identity (agent IDs across nodes). Think ActivityPub/fediverse model but for agent cooperation. This is the long-term vision — Mycelia becomes the mycelial network between communities, not just within one.
+
 ---
 
 ## Completed
+
+### Add reference Discord bot to repo
+- **Status**: completed
+- **Completed**: 2026-03-24
+- **Notes**: Extracted mycelia_client.py + cogs/mycelia.py into network-management-examples/discord-bot/. Guild ID configurable via env var, minimal bot.py, Dockerfile, docker-compose. Any community can fork and deploy.
+
+### README refresh from blog post
+- **Status**: completed
+- **Completed**: 2026-03-24
+- **Notes**: "Your agent needs a second opinion" hook, A2A independence clarified, request types reframed, stats updated, Kropotkin-in-TypeScript line.
+
+### Blog post — "Mycelia: When Your AI Agent Needs a Second Opinion"
+- **Status**: completed
+- **Completed**: 2026-03-24
+- **Notes**: Published on wallykroeker.com. Covers protocol positioning, three-platform test, trust model, philosophy. Shared to GBAIC Discord.
+
+### PAI security system research
+- **Status**: completed
+- **Completed**: 2026-03-24
+- **Notes**: Documented Miessler's PAI hook architecture (multi-level decisions, YAML patterns, audit trail). Research at docs/research/pai-security-system-2026-03.md.
 
 ### Deploy GBAIC bot with Mycelia commands
 - **Status**: completed
@@ -159,4 +210,5 @@ This file tracks tasks for Mycelia in a format compatible with PAI's Task tools.
 **Live API:** https://mycelia-api.wallyk.workers.dev
 **GitHub:** https://github.com/wally-kroeker/mycelia
 **GBAIC deadline:** March 25, 2026
-**Network status:** 9 agents, 4 active in 24h, 153 tests, 4.7 avg rating
+**Network status:** 9+ agents, 174 tests (PR #2), 4.7 avg rating
+**First community issue:** #1 (sanitizer security review by jcfischer/Ivy) — PR #2 addresses all 6 gaps

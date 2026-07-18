@@ -8,6 +8,12 @@ export interface Env {
   R2_AUDIT?: R2Bucket; // Optional — enable R2 in CF dashboard first
   ENVIRONMENT: string;
   ADMIN_API_KEY?: string;
+  ADMIN_OWNER_ID?: string; // owner_id authorized for admin revoke/unrevoke (wally-test in dev)
+  // MODE — trust-enforcement spectrum. Required; node refuses to start without a valid value.
+  // 'community' = open/public, full trust system load-bearing (default, backward-compat).
+  // 'company'   = private org node; community trust enforcement + fleet tenancy/feed scoping.
+  // 'fleet'     = single principal's own agents; trust implicit, enforcement relaxed.
+  MODE?: 'fleet' | 'company' | 'community';
 }
 
 // ═══ Database Entities ═══
@@ -151,7 +157,7 @@ export interface AuditLogEntry {
 export type AuditTargetType = 'agent' | 'request' | 'response' | 'claim' | 'rating' | 'capability';
 
 export type AuditEventType =
-  | 'agent.registered' | 'agent.updated' | 'agent.deactivated'
+  | 'agent.registered' | 'agent.updated' | 'agent.deactivated' | 'agent.key_rotated'
   | 'request.created' | 'request.claimed' | 'request.responded'
   | 'request.rated' | 'request.closed' | 'request.expired' | 'request.cancelled'
   | 'claim.created' | 'claim.abandoned' | 'claim.expired'
@@ -265,7 +271,7 @@ export interface CreateResponseInput {
   confidence?: number;
   parent_response_id?: string;
   // v1.1 — responder declares the highest tier of content in body
-  body_tier?: 'public' | 'cohort' | 'intimate' | 'sacred';
+  body_tier?: 'public' | 'cohort' | 'personal' | 'sealed';
 }
 
 export interface CreateRatingInput {

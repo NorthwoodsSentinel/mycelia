@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env, AuthContext, CreateAgentInput, UpdateAgentInput } from '../types';
 import { authMiddleware, requireAgentKey, generateApiKey } from '../middleware/auth';
+import { isRegistrationRestricted, type NodeMode } from '../middleware/fleet-gate';
 import { rateLimit } from '../middleware/rate-limit';
 import { writeAuditLog } from '../lib/audit';
 import { kvInvalidateCapabilityCache } from '../lib/kv';
@@ -40,6 +41,31 @@ agents.post('/', requireAgentKey, rateLimit('agent.register'), async (c) => {
   }
   if (!/^[a-zA-Z0-9-]+$/.test(input.owner_id)) {
     return c.json(error('VALIDATION_ERROR', 'owner_id must be alphanumeric and hyphens only', 400).body, 400);
+  }
+
+  // fleet/company: key-gated registration is also owner-restricted —
+  // only agents whose resolved owner_id matches ADMIN_OWNER_ID may register.
+  // This prevents non-owner agents from adding strangers to a private fleet node.
+  const mode = (c.env.MODE ?? 'community') as NodeMode;
+  if (isRegistrationRestricted(mode)) {
+    const auth = c.get('auth');
+    const adminOwnerId = c.env.ADMIN_OWNER_ID;
+    if (!adminOwnerId) {
+      return c.json(error('INTERNAL_ERROR', 'ADMIN_OWNER_ID is not configured on this node.', 500).body, 500);
+    }
+    if (auth.owner_id !== adminOwnerId) {
+      return c.json(
+        error('FORBIDDEN', `Registration on this node is restricted. Only agents owned by ${adminOwnerId} may register agents. (MODE=${mode})`, 403).body,
+        403
+      );
+    }
+    // Also enforce that the agent being registered belongs to the admin owner.
+    if (input.owner_id !== adminOwnerId) {
+      return c.json(
+        error('FORBIDDEN', `New agents must belong to owner ${adminOwnerId} on this node. (MODE=${mode})`, 403).body,
+        403
+      );
+    }
   }
 
   // Validate description
@@ -280,13 +306,13 @@ agents.post('/:id/revoke', requireAgentKey, async (c) => {
   const auth = c.get('auth');
   const id = c.req.param('id');
 
-  // Authorization: self-revoke or rob (owner_id == rob-chuvala on the admin agent)
+  // Authorization: self-revoke or admin (owner_id matches ADMIN_OWNER_ID env var).
   // We treat the caller's resolved agent as authoritative on self-revoke.
-  // For Rob admin we check the auth's owner_id.
   const isSelf = auth.agent_id === id;
-  const isAdmin = auth.owner_id === 'rob-chuvala';
+  const adminOwnerId = c.env.ADMIN_OWNER_ID ?? 'wally-test';
+  const isAdmin = auth.owner_id === adminOwnerId;
   if (!isSelf && !isAdmin) {
-    return c.json(error('FORBIDDEN', 'Only the agent itself or rob-chuvala may revoke', 403).body, 403);
+    return c.json(error('FORBIDDEN', 'Only the agent itself or the admin may revoke', 403).body, 403);
   }
 
   let body: { reason?: string; revoke_until?: string };
@@ -344,8 +370,9 @@ agents.delete('/:id/revoke', requireAgentKey, async (c) => {
   const auth = c.get('auth');
   const id = c.req.param('id');
 
-  if (auth.owner_id !== 'rob-chuvala') {
-    return c.json(error('FORBIDDEN', 'Only rob-chuvala may lift a revocation', 403).body, 403);
+  const adminOwnerId = c.env.ADMIN_OWNER_ID ?? 'wally-test';
+  if (auth.owner_id !== adminOwnerId) {
+    return c.json(error('FORBIDDEN', 'Only the admin may lift a revocation', 403).body, 403);
   }
 
   await unrevoke(c.env.KV, id);
