@@ -261,31 +261,51 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
 
 // ─── GET /v1/requests — Browse open requests ─────────────────────────────────
 
-requests.get('/', rateLimit('read'), async (c) => {
-  const query = c.req.query();
+/**
+ * Build the WHERE clause + bound params for the request-browse query.
+ *
+ * Exported for unit testing: this is the whole filter contract, and it is the
+ * part that failed silently. `target_agent_id` was documented and advertised by
+ * clients (the MCP browse tool sends it) but no route ever read it off the query
+ * string, so a caller asking "what is directed at me?" got EVERY open request
+ * back and no error — indistinguishable from a correct answer.
+ *
+ * Any filter added here must be exercised by a test that FAILS when the filter is
+ * dropped; a filter whose absence returns a superset is the failure mode that
+ * cannot announce itself.
+ */
+export function buildRequestListFilter(query: Record<string, string | undefined>): {
+  where: string;
+  params: unknown[];
+} {
   const status = query.status || 'open';
   const tagsParam = query.tags;
   const tags = tagsParam ? tagsParam.split(',').filter(Boolean) : undefined;
-  const type = query.type;
-  const priority = query.priority;
-  const sort = query.sort;
-  const pagination = parsePagination(query);
-
-  // Override sort from query param (parsePagination already captures it, but we want to validate)
-  const validSorts = ['created_at', 'priority'];
-  const sortField = sort && validSorts.includes(sort) ? sort : 'created_at';
 
   let where = 'WHERE r.status = ?';
   const params: unknown[] = [status];
 
-  if (type) {
+  if (query.type) {
     where += ' AND r.request_type = ?';
-    params.push(type);
+    params.push(query.type);
   }
 
-  if (priority) {
+  if (query.priority) {
     where += ' AND r.priority = ?';
-    params.push(priority);
+    params.push(query.priority);
+  }
+
+  // Directed-request filter. `none` selects broadcast requests (target_agent_id IS
+  // NULL) — needed because otherwise there is no way to ask for undirected work,
+  // and callers were reading the unfiltered list as if it meant that.
+  const targetAgentId = query.target_agent_id;
+  if (targetAgentId) {
+    if (targetAgentId === 'none') {
+      where += ' AND r.target_agent_id IS NULL';
+    } else {
+      where += ' AND r.target_agent_id = ?';
+      params.push(targetAgentId);
+    }
   }
 
   if (tags && tags.length > 0) {
@@ -296,6 +316,20 @@ requests.get('/', rateLimit('read'), async (c) => {
     )`;
     params.push(...tags);
   }
+
+  return { where, params };
+}
+
+requests.get('/', rateLimit('read'), async (c) => {
+  const query = c.req.query();
+  const sort = query.sort;
+  const pagination = parsePagination(query);
+
+  // Override sort from query param (parsePagination already captures it, but we want to validate)
+  const validSorts = ['created_at', 'priority'];
+  const sortField = sort && validSorts.includes(sort) ? sort : 'created_at';
+
+  const { where, params } = buildRequestListFilter(query);
 
   const orderBy = sortField === 'priority'
     ? `CASE r.priority WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 ELSE 4 END ASC, r.created_at DESC`
