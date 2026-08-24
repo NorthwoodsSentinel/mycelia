@@ -57,6 +57,9 @@ crons = ["*/15 * * * *"]
 
 [env.dev]
 name = "mycelia-dev"
+# Wrangler env vars do NOT inherit top-level [vars]: dev needs its own ADMIN_POP_JKT or every admin call is a 503 by design.
+[env.dev.vars]
+ADMIN_POP_JKT = "REPLACE_WITH_DEV_ADMIN_KEY_THUMBPRINT"
 
 [[env.dev.d1_databases]]
 binding = "DB"

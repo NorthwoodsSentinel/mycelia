@@ -38,8 +38,11 @@ describe('admin DPoP (H5)', () => {
     const r = await call({ Authorization: `Bearer ${ADMIN}`, DPoP: proof }); expect(r.status).toBe(401);
     expect(((await r.json()) as any).error.code).toBe('POP_JTI_REPLAY');
   });
-  it('fleet mode with ADMIN_POP_JKT unset → 503, never bearer-only', async () => {
-    const e2 = { ...env, ADMIN_POP_JKT: undefined };
-    const r = await app.request(URL_, { headers: { Authorization: `Bearer ${ADMIN}` } }, e2); expect(r.status).toBe(503);
+  it('ADMIN_POP_JKT unset → 503 with the named error, in fleet AND community mode (no bearer-only path anywhere)', async () => {
+    for (const mode of ['fleet', 'company', 'community']) {
+      const e2 = { ...env, ADMIN_POP_JKT: undefined, MODE: mode };
+      const r = await app.request(URL_, { headers: { Authorization: `Bearer ${ADMIN}` } }, e2); expect(r.status).toBe(503);
+      const body: any = await r.json(); expect(body.error.message).toContain('ADMIN_POP_JKT');
+    }
   });
 });

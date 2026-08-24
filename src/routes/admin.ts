@@ -13,7 +13,7 @@ import { verifyDpop, d1JtiStore, sha256b64url } from '../lib/dpop';
 /**
  * H5 (codex rounds 1–8, accepted exception until now): the admin bearer alone is a static reusable secret.
  * When ADMIN_POP_JKT is set, every admin request must ALSO carry a DPoP proof under that key (ath bound to the admin bearer,
- * one-time jti, htm/htu bound). A stolen ADMIN_API_KEY is then insufficient. Unset → bearer-only, logged once per request.
+ * one-time jti, htm/htu bound). A stolen ADMIN_API_KEY is then insufficient. Unset → admin access REFUSED (503) in every mode.
  */
 const requireAdmin = createMiddleware<{ Bindings: Env }>(
   async (c, next) => {
@@ -37,11 +37,9 @@ const requireAdmin = createMiddleware<{ Bindings: Env }>(
       if (!proof || proof.length > 4096) { c.header('WWW-Authenticate', 'DPoP algs="EdDSA"'); return c.json(error('UNAUTHORIZED', 'Admin requests require a DPoP proof under the admin key (POP_REQUIRED)', 401).body, 401); }
       const r = await verifyDpop(proof, { htm: c.req.method, htu: c.req.url, ath: await sha256b64url(key), expectedJkt: c.env.ADMIN_POP_JKT, agentId: 'admin', jtiStore: d1JtiStore(c.env.DB) });
       if (!r.ok) { c.header('WWW-Authenticate', 'DPoP algs="EdDSA"'); return c.json({ ok: false, error: { code: r.code, message: `admin proof: ${r.message}` }, meta: { request_id: generateId(), timestamp: now() } }, r.code === 'POP_STORE_UNAVAILABLE' ? 503 : 401); }
-    } else if ((c.env.MODE ?? 'community') !== 'community') {
-      // fleet/company: a bearer-only admin surface is a misconfiguration, not a mode. Refuse, name it, never fall back.
-      return c.json(error('INTERNAL_ERROR', 'ADMIN_POP_JKT is not configured; admin access refused (fail-closed in fleet/company mode)', 503).body, 503);
     } else {
-      console.warn('admin: bearer-only (ADMIN_POP_JKT unset; community mode)');
+      // EVERY mode: a bearer-only admin surface is a misconfiguration, not a mode. Refuse, name it, never fall back.
+      return c.json(error('INTERNAL_ERROR', 'ADMIN_POP_JKT is not configured; admin access refused (fail-closed in all modes)', 503).body, 503);
     }
 
     await next();
