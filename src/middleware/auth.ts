@@ -40,6 +40,9 @@ export async function hashApiKey(key: string): Promise<string> {
  */
 export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: { auth: AuthContext } }>(
   async (c, next) => {
+    // Idempotent per request: two routers share the /v1/requests prefix and both mount this middleware.
+    // A second pass would re-spend the one-time DPoP jti and report a false POP_JTI_REPLAY (found live 2026-08-24).
+    if ((c as any).get('auth')) { await next(); return; }
     const authHeader = c.req.header('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return c.json({
