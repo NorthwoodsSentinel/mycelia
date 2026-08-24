@@ -12,6 +12,10 @@ import migration0004 from '../../migrations/0004_rate_limits_d1.sql?raw';
 import migration0008 from '../../migrations/0008_add_structured_coordination_fields.sql?raw';
 import migration0009 from '../../migrations/0009_pop_keys.sql?raw';
 import migration0010 from '../../migrations/0010_pop_state_check.sql?raw';
+import migration0011 from '../../migrations/0011_pop_audit_jkt.sql?raw';
+import migration0012 from '../../migrations/0012_pop_bound_never_ambient.sql?raw';
+import migration0014 from '../../migrations/0014_pop_promoted_trigger.sql?raw';
+import migration0015 from '../../migrations/0015_pop_audit_created_index.sql?raw';
 import migration0013 from '../../migrations/0013_deleg_fail_counter.sql?raw';
 import { createD1Test, D1Adapter } from './_d1-adapter';
 
@@ -29,8 +33,7 @@ const MIGRATION_0002_TEST_STUB = `
 // schema must carry them. Migrations 0006/0007 (request_type CHECK widen +
 // FK-rebuild dance) are skipped here: app-layer validation is authoritative
 // and no integration test posts ops-bus request types.
-const MIGRATION_0011_TEST_STUB = `ALTER TABLE pop_audit ADD COLUMN jkt TEXT;`;  // 0011's triggers cannot load in this adapter; the column can
-const MIGRATIONS = [migration0001, MIGRATION_0002_TEST_STUB, migration0003, migration0004, migration0008, migration0009, MIGRATION_0011_TEST_STUB, migration0013];  // 0010 = trigger DDL; the test adapter splits on ';' and cannot load triggers (D1 applies it fine)
+const MIGRATIONS = [migration0001, MIGRATION_0002_TEST_STUB, migration0003, migration0004, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013, migration0014, migration0015];
 
 export function createMockKV() {
   const store = new Map<string, string>();
@@ -72,9 +75,7 @@ export interface TestEnv {
 export function applyMigrationsSync(env: TestEnv): void {
   const db = env.DB.db;
   for (const sql of MIGRATIONS) {
-    for (const stmt of splitSql(sql)) {
-      db.exec(stmt);
-    }
+    db.exec(sql);   // whole-file exec: better-sqlite3 handles multi-statement SQL including trigger bodies (2026-08-24)
   }
 }
 

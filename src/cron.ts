@@ -23,7 +23,8 @@ export async function handleScheduled(env: Env): Promise<void> {
     const d8 = new Date(Date.now() - 8 * 86400_000).toISOString().slice(0, 13);
     await env.DB.prepare('DELETE FROM deleg_fail WHERE hour < ?').bind(d8).run();
     const d90 = new Date(Date.now() - 90 * 86400_000).toISOString();
-    const pa = await env.DB.prepare('DELETE FROM pop_audit WHERE created_at < ?').bind(d90).run();
+    // Bounded batch (≤2000 rows/run) on the created_at index (0015): the prune can never become a full scan that fails to catch up.
+    const pa = await env.DB.prepare('DELETE FROM pop_audit WHERE rowid IN (SELECT rowid FROM pop_audit WHERE created_at < ? ORDER BY created_at LIMIT 2000)').bind(d90).run();
     if ((pa.meta?.changes ?? 0) > 0) console.log('[cron] pruned pop_audit rows', pa.meta.changes);
   } catch (e) { console.error('[cron] retention prune failed (non-fatal)', String(e)); }
 

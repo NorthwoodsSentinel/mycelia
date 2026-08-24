@@ -4,10 +4,16 @@ import type { Env } from '../types';
 import { generateApiKey } from '../middleware/auth';
 import { writeAuditLog } from '../lib/audit';
 import { success, error, now, generateId } from '../lib/utils';
+import { verifyDpop, d1JtiStore, sha256b64url } from '../lib/dpop';
 
 /**
  * Admin auth middleware — validates bearer token against ADMIN_API_KEY env var.
  * Bypasses agent auth entirely — no agent lookup, no last_seen update.
+ */
+/**
+ * H5 (codex rounds 1–8, accepted exception until now): the admin bearer alone is a static reusable secret.
+ * When ADMIN_POP_JKT is set, every admin request must ALSO carry a DPoP proof under that key (ath bound to the admin bearer,
+ * one-time jti, htm/htu bound). A stolen ADMIN_API_KEY is then insufficient. Unset → bearer-only, logged once per request.
  */
 const requireAdmin = createMiddleware<{ Bindings: Env }>(
   async (c, next) => {
@@ -25,6 +31,14 @@ const requireAdmin = createMiddleware<{ Bindings: Env }>(
     const key = authHeader.slice(7);
     if (key !== adminKey) {
       return c.json(error('UNAUTHORIZED', 'Invalid admin API key', 401).body, 401);
+    }
+    if (c.env.ADMIN_POP_JKT) {
+      const proof = c.req.header('DPoP');
+      if (!proof || proof.length > 4096) { c.header('WWW-Authenticate', 'DPoP algs="EdDSA"'); return c.json(error('UNAUTHORIZED', 'Admin requests require a DPoP proof under the admin key (POP_REQUIRED)', 401).body, 401); }
+      const r = await verifyDpop(proof, { htm: c.req.method, htu: c.req.url, ath: await sha256b64url(key), expectedJkt: c.env.ADMIN_POP_JKT, agentId: 'admin', jtiStore: d1JtiStore(c.env.DB) });
+      if (!r.ok) { c.header('WWW-Authenticate', 'DPoP algs="EdDSA"'); return c.json({ ok: false, error: { code: r.code, message: `admin proof: ${r.message}` }, meta: { request_id: generateId(), timestamp: now() } }, r.code === 'POP_STORE_UNAVAILABLE' ? 503 : 401); }
+    } else {
+      console.warn('admin: bearer-only (ADMIN_POP_JKT unset) — H5 exception active');
     }
 
     await next();
@@ -127,12 +141,10 @@ admin.post('/pop/promote/:id', async (c) => {
 // POST /v1/admin/pop/demote/:id — enforce → shadow for ONE agent (never the fleet)
 admin.post('/pop/demote/:id', async (c) => {
   const id = c.req.param('id');
-  const target = await c.env.DB.prepare('SELECT id FROM agents WHERE id = ? AND pop_jkt IS NOT NULL').bind(id).first<{ id: string }>();
-  if (!target) return c.json(error('NOT_FOUND', 'Agent not found or not bound', 404).body, 404);
-  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_demoted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { to: 'shadow' } });
-  const r = await c.env.DB.prepare('UPDATE agents SET pop_mode = ? WHERE id = ? AND pop_jkt IS NOT NULL').bind('shadow', id).run();
-  if (!r.meta.changes) { await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_demotion_aborted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { reason: 'binding vanished between audit and update' } }); return c.json(error('CONFLICT' as any, 'binding changed during demotion', 409).body, 409); }
-  return c.json(success({ agent_id: id, pop_mode: 'shadow' }));
+  // Transition-predicated (enforce → shadow); the audit row is written by trigger trg_agents_pop_demoted (0014), never here.
+  const r = await c.env.DB.prepare("UPDATE agents SET pop_mode = 'shadow' WHERE id = ? AND pop_jkt IS NOT NULL AND pop_mode = 'enforce'").bind(id).run();
+  if (!r.meta.changes) return c.json(error('CONFLICT' as any, 'agent is not bound or not in enforce; nothing to demote', 409).body, 409);
+  return c.json(success({ agent_id: id, pop_mode: 'shadow', audited_by: 'trigger trg_agents_pop_demoted' }));
 });
 
 // DELETE /v1/admin/pop/:id — recovery ceremony: clear the binding (lost key). Admin only, one agent.

@@ -18,6 +18,8 @@ export interface Env {
    *  min(agent.pop_mode, POP_CEILING). 'ambient' < 'shadow' < 'enforce'. It can only LOWER enforcement —
    *  never promote — so it cannot be the actuator of a shadow/enforce flap. Absent = 'enforce' (no brake). */
   POP_CEILING?: 'ambient' | 'shadow' | 'enforce';
+  /** H5: RFC 7638 thumbprint of the ADMIN Ed25519 key. When set, admin routes require a DPoP proof under it (bearer alone insufficient). */
+  ADMIN_POP_JKT?: string;
 }
 
 // ═══ Database Entities ═══
