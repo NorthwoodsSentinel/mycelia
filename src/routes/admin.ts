@@ -17,6 +17,7 @@ const requireAdmin = createMiddleware<{ Bindings: Env }>(
     }
 
     const authHeader = c.req.header('Authorization');
+    if (authHeader && authHeader.length > 512) return c.json(error('UNAUTHORIZED', 'Authorization header exceeds 512 bytes', 401).body, 401);
     if (!authHeader?.startsWith('Bearer ')) {
       return c.json(error('UNAUTHORIZED', 'Missing or invalid Authorization header', 401).body, 401);
     }
@@ -59,7 +60,7 @@ async function popCoverage(db: D1Database, days = POP_WINDOW_DAYS) {
     totals.proven += b.proven; totals.ambient += b.ambient; totals.would_deny += b.would_deny; totals.denied += b.denied;
     if (b.population === 'unobserved') totals.unobserved++;
   }
-  return { window_days: days, since, ...totals, by_agent: Object.values(by).sort((x: any, y: any) => (y.would_deny - x.would_deny) || (y.proven - x.proven)) };
+  return { window_days: days, since, since_snapshot: new Date().toISOString(), ...totals, by_agent: Object.values(by).sort((x: any, y: any) => (y.would_deny - x.would_deny) || (y.proven - x.proven)) };
 }
 
 function promotionBlockers(a: any): { code: string; observed: number | string; threshold: number | string }[] {
@@ -90,6 +91,9 @@ admin.post('/pop/promote/:id', async (c) => {
   // Audit before mutation; mutation is a CAS on the SAME key the evidence was counted under (H3 rotation race);
   // a CAS miss writes a compensating audit row so the log never claims a promotion that did not happen.
   await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promoted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { from: a.pop_mode, to: 'enforce', proven: a.proven, window_days: cov.window_days, jkt: a.jkt } });
+  // Re-check adverse evidence written since the snapshot (would_deny/denied under the current key) — closes the snapshot→promote window.
+  const late = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM pop_audit WHERE agent_id = ? AND outcome IN ('would_deny','denied') AND created_at >= ?").bind(id, cov.since_snapshot ?? cov.since).first<{ n: number }>();
+  if ((late?.n ?? 0) > 0) return c.json({ ok: false, error: { code: 'PROMOTION_BLOCKED', message: 'adverse evidence arrived during promotion', blockers: [{ code: 'WOULD_DENY_PRESENT', observed: late!.n, threshold: 0 }] }, meta: { request_id: generateId(), timestamp: now() } }, 409);
   const up = await c.env.DB.prepare('UPDATE agents SET pop_mode = ? WHERE id = ? AND pop_jkt = ?').bind('enforce', id, a.jkt).run();
   if (!up.meta.changes) {
     await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promotion_aborted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { reason: 'key changed between evidence snapshot and promotion', jkt: a.jkt } });

@@ -8,6 +8,7 @@ const fakeDb = { prepare: () => ({ bind: () => ({ run: async () => ({ meta: { ch
 const URL_ = 'https://mycelia-api.robert-chuvala.workers.dev/v1/requests/x/claims';
 const BEARER = 'mycelia_live_' + 'c'.repeat(64);
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+const dthOf = (h: string) => sha256b64url(h);
 
 describe('effectiveMode', () => {
   it('ceiling only lowers', () => {
@@ -59,16 +60,31 @@ describe('decidePop', () => {
   it('C1: a valid chain with a leaf proof from the WRONG key is a HARD deny in shadow', async () => {
     const root = await generateDpopKeypair(); const leaf = await generateDpopKeypair(); const other = await generateDpopKeypair(); const now = Math.floor(Date.now() / 1000);
     const l0 = await signLink({ delegated_by: root.jkt, delegated_to: leaf.jkt, to_jwk: leaf.publicJwk, scope: ['bus:respond'], exp: now + 600, depth: 0, max_depth: 2, nonce: 'n' }, root.privateKey);
-    const proof = await makeDpopProof({ privateKey: other.privateKey, publicJwk: other.publicJwk, htm: 'POST', htu: URL_ });
-    const r = await decidePop({ db: fakeDb, agent: { id: 'a', pop_jkt: root.jkt, pop_jwk: JSON.stringify(root.publicJwk), pop_mode: 'shadow' }, ceiling: undefined, bearer: null, method: 'POST', url: URL_, dpopHeader: proof, delegationHeader: b64([l0]) });
+    const hdr = b64([l0]);
+    const proof = await makeDpopProof({ privateKey: other.privateKey, publicJwk: other.publicJwk, htm: 'POST', htu: URL_, dth: await dthOf(hdr) });
+    const r = await decidePop({ db: fakeDb, agent: { id: 'a', pop_jkt: root.jkt, pop_jwk: JSON.stringify(root.publicJwk), pop_mode: 'shadow' }, ceiling: undefined, bearer: null, method: 'POST', url: URL_, dpopHeader: proof, delegationHeader: hdr });
     expect(r.outcome).toBe('denied'); if (r.outcome === 'denied') expect(r.code).toBe('POP_KEY_MISMATCH');
   });
   it('valid chain + valid leaf proof → proven with acting_for and delegated_scope', async () => {
     const root = await generateDpopKeypair(); const leaf = await generateDpopKeypair(); const now = Math.floor(Date.now() / 1000);
     const l0 = await signLink({ delegated_by: root.jkt, delegated_to: leaf.jkt, to_jwk: leaf.publicJwk, scope: ['bus:respond'], exp: now + 600, depth: 0, max_depth: 2, nonce: 'n' }, root.privateKey);
-    const proof = await makeDpopProof({ privateKey: leaf.privateKey, publicJwk: leaf.publicJwk, htm: 'POST', htu: URL_ });
-    const r = await decidePop({ db: fakeDb, agent: { id: 'root-agent', pop_jkt: root.jkt, pop_jwk: JSON.stringify(root.publicJwk), pop_mode: 'shadow' }, ceiling: undefined, bearer: null, method: 'POST', url: URL_, dpopHeader: proof, delegationHeader: b64([l0]) });
-    expect(r.outcome).toBe('proven'); if (r.outcome === 'proven') { expect(r.acting_for).toBe('root-agent'); expect(r.delegated_scope).toEqual(['bus:respond']); }
+    const hdr = b64([l0]);
+    const proof = await makeDpopProof({ privateKey: leaf.privateKey, publicJwk: leaf.publicJwk, htm: 'POST', htu: URL_, dth: await dthOf(hdr) });
+    const r = await decidePop({ db: fakeDb, agent: { id: 'root-agent', pop_jkt: root.jkt, pop_jwk: JSON.stringify(root.publicJwk), pop_mode: 'shadow' }, ceiling: undefined, bearer: null, method: 'POST', url: URL_, dpopHeader: proof, delegationHeader: hdr });
+    expect(r.outcome).toBe('proven'); if (r.outcome === 'proven') { expect(r.acting_for).toBe('root-agent'); expect(r.delegated_scope).toEqual(['bus:respond']); expect(r.jkt).toBe(leaf.jkt); }
+  });
+  it('round 3 MEDIUM: a leaf proof made for chain A is refused under chain B to the same leaf (dth binding)', async () => {
+    const root = await generateDpopKeypair(); const leaf = await generateDpopKeypair(); const now = Math.floor(Date.now() / 1000);
+    const la = await signLink({ delegated_by: root.jkt, delegated_to: leaf.jkt, to_jwk: leaf.publicJwk, scope: ['bus:respond'], exp: now + 600, depth: 0, max_depth: 2, nonce: 'a' }, root.privateKey);
+    const lb = await signLink({ delegated_by: root.jkt, delegated_to: leaf.jkt, to_jwk: leaf.publicJwk, scope: ['bus:*'], exp: now + 600, depth: 0, max_depth: 2, nonce: 'b' }, root.privateKey);
+    const proofA = await makeDpopProof({ privateKey: leaf.privateKey, publicJwk: leaf.publicJwk, htm: 'POST', htu: URL_, dth: await dthOf(b64([la])) });
+    const r = await decidePop({ db: fakeDb, agent: { id: 'root-agent', pop_jkt: root.jkt, pop_jwk: JSON.stringify(root.publicJwk), pop_mode: 'shadow' }, ceiling: undefined, bearer: null, method: 'POST', url: URL_, dpopHeader: proofA, delegationHeader: b64([lb]) });
+    expect(r.outcome).toBe('denied'); if (r.outcome === 'denied') expect(r.code).toBe('POP_DTH_MISMATCH');
+  });
+  it('round 3 H2: a bound agent marked ambient is CORRUPT, never fail-open', async () => {
+    const kp = await generateDpopKeypair();
+    const r = await decidePop({ db: fakeDb, agent: { id: 'a', pop_jkt: kp.jkt, pop_jwk: JSON.stringify(kp.publicJwk), pop_mode: 'ambient' }, ceiling: undefined, bearer: BEARER, method: 'POST', url: URL_, dpopHeader: undefined, delegationHeader: undefined });
+    expect(r.outcome).toBe('denied'); if (r.outcome === 'denied') expect(r.code).toBe('POP_STATE_CORRUPT');
   });
   it('H2: empty-string key fields and unbound+enforce are HARD denies', async () => {
     const r1 = await decidePop({ db: fakeDb, agent: { id: 'a', pop_jkt: '', pop_jwk: '', pop_mode: 'shadow' }, ceiling: undefined, bearer: BEARER, method: 'POST', url: URL_, dpopHeader: undefined, delegationHeader: undefined });

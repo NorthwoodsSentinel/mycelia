@@ -47,6 +47,7 @@ export async function decidePop(args: {
   if (hasJkt !== hasJwk) return hard('POP_STATE_CORRUPT', 'pop binding is partial; admin recovery required');
   if (args.agent.pop_mode != null && !(args.agent.pop_mode in RANK)) return hard('POP_STATE_CORRUPT', 'pop_mode is not a known value');
   if (!hasJkt && args.agent.pop_mode && args.agent.pop_mode !== 'ambient') return hard('POP_STATE_CORRUPT', 'unbound agent carries a non-ambient pop_mode; admin recovery required');
+  if (hasJkt && (args.agent.pop_mode ?? 'ambient') === 'ambient') return hard('POP_STATE_CORRUPT', 'bound agent carries pop_mode=ambient; a bound key is never ambient');
   // C1 (structural): a bearer request may never carry a Delegation header, and a Delegated request never carries a bearer.
   if (args.bearer != null && args.delegationHeader) return hard('DELEG_WITH_BEARER', 'delegation is presented with Authorization: Delegated <root_agent_id>, never with a bearer');
   if (args.bearer == null && !args.delegationHeader) return hard('DELEG_REQUIRED', 'Authorization: Delegated requires a Delegation header');
@@ -85,8 +86,10 @@ export async function decidePop(args: {
   if (!args.dpopHeader) return acting_for ? hard('POP_REQUIRED', 'delegated requests must carry a DPoP proof of the leaf key') : deny('POP_REQUIRED', 'DPoP header missing');
   // ath binds the proof to the bearer. A Delegated request has no bearer: the proof is bound to the chain's leaf key instead.
   const ath = args.bearer != null ? await sha256b64url(args.bearer) : null;
+  // A delegated proof is bound to THIS chain (dth = sha256 of the Delegation header) so it cannot be replayed under another chain to the same leaf.
+  const dth = args.delegationHeader ? await sha256b64url(args.delegationHeader) : null;
   const r = await verifyDpop(args.dpopHeader, {
-    htm: args.method, htu: args.url, ath, expectedJkt, now: args.now, agentId: args.agent.id, jtiStore: d1JtiStore(args.db),
+    htm: args.method, htu: args.url, ath, dth, expectedJkt, now: args.now, agentId: args.agent.id, jtiStore: d1JtiStore(args.db),
   });
   if (!r.ok) {
     // Store-unavailable is a REFUSAL even in shadow: we cannot claim "would_deny" or "proven" without the store.

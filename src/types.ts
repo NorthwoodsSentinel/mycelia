@@ -320,6 +320,8 @@ export interface AuthContext {
   pop: 'ambient' | 'proven' | 'would_deny';
   pop_mode: 'ambient' | 'shadow' | 'enforce';
   pop_reason?: string;
+  /** The thumbprint the request's proof verified under (proven only). Bind/rotate CAS against THIS, never a re-read row. */
+  pop_jkt?: string;
   /** Set only when a valid delegation chain was presented: the ROOT agent (from its DB row), and the leaf's scope. */
   acting_for?: string;
   delegated_scope?: string[];

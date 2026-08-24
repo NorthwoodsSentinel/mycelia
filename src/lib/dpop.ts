@@ -19,6 +19,7 @@ export type DpopErrorCode =
   | 'POP_HTU_MISMATCH'
   | 'POP_IAT_WINDOW'
   | 'POP_ATH_MISMATCH'
+  | 'POP_DTH_MISMATCH'
   | 'POP_JTI_REPLAY'
   | 'POP_STORE_UNAVAILABLE';
 
@@ -37,7 +38,8 @@ export interface JtiStore {
 export interface VerifyDpopOptions {
   htm: string;                 // expected HTTP method
   htu: string;                 // expected URL (query/fragment stripped by the verifier)
-  ath: string | null;          // base64url(sha256(bearer)) or null to skip (bind-time only)
+  ath: string | null;          // base64url(sha256(bearer)) or null when no bearer exists (Delegated scheme)
+  dth?: string | null;         // base64url(sha256(Delegation header)) — REQUIRED when a chain is presented; binds the leaf proof to THIS chain
   expectedJkt: string | null;  // the agent's registered thumbprint; null = accept any key (bind-time only)
   now?: number;                // unix seconds; injectable for tests
   jtiStore: JtiStore;
@@ -139,6 +141,13 @@ export async function verifyDpop(proof: string | null | undefined, opts: VerifyD
   if (now - payload.iat > maxAge || payload.iat - now > maxSkew) return fail('POP_IAT_WINDOW', `iat outside window (age ${now - payload.iat}s; allowed -${maxSkew}..${maxAge})`);
   if (opts.ath != null) {
     if (typeof payload.ath !== 'string' || payload.ath !== opts.ath) return fail('POP_ATH_MISMATCH', 'ath does not match the presented bearer');
+  } else if (payload.ath !== undefined) {
+    return fail('POP_ATH_MISMATCH', 'ath present but no bearer was presented');
+  }
+  if (opts.dth != null) {
+    if (typeof payload.dth !== 'string' || payload.dth !== opts.dth) return fail('POP_DTH_MISMATCH', 'dth does not match the presented Delegation chain');
+  } else if (payload.dth !== undefined) {
+    return fail('POP_DTH_MISMATCH', 'dth present but no Delegation chain was presented');
   }
 
   // One-time spend, atomic, fail-closed on store failure.
@@ -184,7 +193,7 @@ export async function generateDpopKeypair(): Promise<{ privateKey: CryptoKey; pu
 }
 
 export async function makeDpopProof(args: {
-  privateKey: CryptoKey; publicJwk: OkpJwk; htm: string; htu: string; ath?: string | null; iat?: number; jti?: string;
+  privateKey: CryptoKey; publicJwk: OkpJwk; htm: string; htu: string; ath?: string | null; dth?: string | null; iat?: number; jti?: string;
 }): Promise<string> {
   const header = { typ: 'dpop+jwt', alg: 'EdDSA', jwk: { kty: 'OKP', crv: 'Ed25519', x: args.publicJwk.x } };
   const payload: Record<string, unknown> = {
@@ -194,6 +203,7 @@ export async function makeDpopProof(args: {
     iat: args.iat ?? Math.floor(Date.now() / 1000),
   };
   if (args.ath) payload.ath = args.ath;
+  if (args.dth) payload.dth = args.dth;
   const h = b64url(te.encode(JSON.stringify(header)));
   const p = b64url(te.encode(JSON.stringify(payload)));
   const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, args.privateKey, te.encode(`${h}.${p}`)));

@@ -289,7 +289,7 @@ agents.post('/me/pop-key', requireAgentKey, async (c) => {
   }
   let body: { jwk?: unknown };
   try { body = await c.req.json(); } catch { return c.json(error('VALIDATION_ERROR', 'JSON body required', 400).body, 400); }
-  if (!isOkpJwk(body.jwk) || 'd' in (body.jwk as any)) {
+  if (!isOkpJwk(body.jwk) || 'd' in (body.jwk as any) || (body.jwk as any).x.length > 128) {
     return c.json(error('VALIDATION_ERROR', 'body.jwk must be a PUBLIC OKP/Ed25519 JWK', 400).body, 400);
   }
   const newJwk = { kty: 'OKP', crv: 'Ed25519', x: (body.jwk as any).x } as const;
@@ -319,8 +319,15 @@ agents.post('/me/pop-key', requireAgentKey, async (c) => {
   const boundAt = now();
   const nextMode = row?.pop_mode === 'enforce' ? 'enforce' : 'shadow';   // first bind → shadow; rotation keeps enforce
   // H1: compare-and-swap against the binding observed at authentication — two concurrent first-binds cannot both win.
+  // Rotation CASes on the key THIS request proved possession of (auth.pop_jkt), never on a re-read row — a proof under K0 cannot rotate K1.
+  if (row?.pop_jkt && auth.pop_jkt !== row.pop_jkt) {
+    return c.json({ ok: false, error: { code: 'POP_BIND_CONFLICT', message: 'binding changed since this proof was made; re-prove under the current key' }, meta: { request_id: generateId(), timestamp: now() } }, 409);
+  }
+  try {
+    await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_key_bind_attempt' as any, actor_id: auth.agent_id, target_type: 'agent', target_id: auth.agent_id, detail: { jkt: newJkt, rotated: !!row?.pop_jkt } });
+  } catch (e) { return c.json({ ok: false, error: { code: 'INTERNAL_ERROR', message: 'audit unavailable; binding refused' }, meta: { request_id: generateId(), timestamp: now() } }, 503); }
   const cas = row?.pop_jkt
-    ? await c.env.DB.prepare('UPDATE agents SET pop_jwk = ?, pop_jkt = ?, pop_bound_at = ?, pop_mode = ? WHERE id = ? AND pop_jkt = ?').bind(JSON.stringify(newJwk), newJkt, boundAt, nextMode, auth.agent_id, row.pop_jkt).run()
+    ? await c.env.DB.prepare('UPDATE agents SET pop_jwk = ?, pop_jkt = ?, pop_bound_at = ?, pop_mode = ? WHERE id = ? AND pop_jkt = ?').bind(JSON.stringify(newJwk), newJkt, boundAt, nextMode, auth.agent_id, auth.pop_jkt).run()
     : await c.env.DB.prepare('UPDATE agents SET pop_jwk = ?, pop_jkt = ?, pop_bound_at = ?, pop_mode = ? WHERE id = ? AND pop_jkt IS NULL').bind(JSON.stringify(newJwk), newJkt, boundAt, nextMode, auth.agent_id).run();
   if (!cas.meta.changes) {
     return c.json({ ok: false, error: { code: 'POP_BIND_CONFLICT', message: 'binding changed concurrently; re-read and retry with a proof under the current key' }, meta: { request_id: generateId(), timestamp: now() } }, 409);

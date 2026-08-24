@@ -63,6 +63,8 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: { aut
         return c.json({ ok: false, error: { code, message: 'message' in d ? d.message : 'delegated request refused' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, code.startsWith('DELEG_') ? 403 : 401);
       }
       const declared = (c as any).get('delegable_scope') as string | undefined;
+      const scopeOk = !!declared && scopeAuthorizes(d.delegated_scope ?? [], declared);
+      if (!declared || !scopeOk) { try { await writePopAudit(c.env.DB, { agent_id: root.id, outcome: 'denied', reason: !declared ? 'DELEG_ROUTE_NOT_DELEGABLE' : 'DELEG_SCOPE_DENIED', htm, htu, arm: d.mode, acting_for: root.id, jkt: d.jkt }); } catch (e) { console.error('pop_audit write failed', String(e)); } }
       if (!declared) return c.json({ ok: false, error: { code: 'DELEG_ROUTE_NOT_DELEGABLE', message: 'This route does not accept delegated principals' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 403);
       if (!scopeAuthorizes(d.delegated_scope ?? [], declared)) return c.json({ ok: false, error: { code: 'DELEG_SCOPE_DENIED', message: `Delegated scope does not cover ${declared}` }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 403);
       try { await writePopAudit(c.env.DB, { agent_id: root.id, outcome: 'proven', htm, htu, arm: d.mode, acting_for: root.id, jkt: d.jkt }); } catch (e) { console.error('pop_audit write failed', String(e)); }
@@ -178,6 +180,7 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: { aut
       pop: pop.outcome,
       pop_mode: pop.mode,
       pop_reason: pop.outcome === 'would_deny' ? pop.code : undefined,
+      pop_jkt: pop.outcome === 'proven' ? pop.jkt : undefined,
       acting_for: pop.outcome === 'proven' ? pop.acting_for : undefined,
       delegated_scope: pop.outcome === 'proven' ? pop.delegated_scope : undefined,
     });
