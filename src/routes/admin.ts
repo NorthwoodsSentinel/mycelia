@@ -76,6 +76,7 @@ function promotionBlockers(a: any): { code: string; observed: number | string; t
   if (!a.bound) blockers.push({ code: 'NOT_BOUND', observed: 'ambient', threshold: 'bound key' });
   if (a.population === 'unobserved') blockers.push({ code: 'UNOBSERVED', observed: 0, threshold: '>0 rows in window' });
   if (a.proven < PROMOTE.min_proven) blockers.push({ code: 'MIN_PROVEN', observed: a.proven, threshold: PROMOTE.min_proven });
+  if (a.bound && a.pop_mode !== 'shadow') blockers.push({ code: 'NOT_IN_SHADOW', observed: a.pop_mode, threshold: 'shadow' });
   if (a.would_deny > PROMOTE.max_would_deny) blockers.push({ code: 'WOULD_DENY_PRESENT', observed: a.would_deny, threshold: PROMOTE.max_would_deny });
   if (a.denied > 0) blockers.push({ code: 'DENIED_PRESENT', observed: a.denied, threshold: 0 });
   return blockers;
@@ -107,19 +108,12 @@ admin.post('/pop/promote/:id', async (c) => {
   };
   // ONE statement decides: the adverse-evidence check is inside the UPDATE's WHERE (NOT EXISTS over rowid > snapshot), and the
   // success audit rides in the same D1 batch, which D1 executes atomically. No window between check, mutation, and record.
-  const successDetail = JSON.stringify({ from: a.pop_mode, to: 'enforce', proven: a.proven, window_days: cov.window_days, jkt: a.jkt, snapshot_rowid: cov.snapshot_rowid });
-  const batch = await c.env.DB.batch([
-    c.env.DB.prepare(
-      "UPDATE agents SET pop_mode = 'enforce' WHERE id = ? AND pop_jkt = ? AND pop_bound_at = ? AND pop_mode = 'shadow' " +
-      "AND NOT EXISTS (SELECT 1 FROM pop_audit WHERE agent_id = ? AND acting_for IS NULL AND outcome IN ('would_deny','denied') AND rowid > ?)"
-    ).bind(id, a.jkt, a.bound_at, id, cov.snapshot_rowid),
-    // success row is conditional on the same predicate, so it is written iff the UPDATE changed the row
-    c.env.DB.prepare(
-      "INSERT INTO audit_log (event_type, actor_id, target_type, target_id, detail, created_at) " +
-      "SELECT 'agent.pop_promoted', NULL, 'agent', ?, ?, ? WHERE EXISTS (SELECT 1 FROM agents WHERE id = ? AND pop_jkt = ? AND pop_bound_at = ? AND pop_mode = 'enforce')"
-    ).bind(id, successDetail, now(), id, a.jkt, a.bound_at),
-  ]);
-  const up = batch[0];
+  // The success audit is written by an AFTER UPDATE trigger guarded on the TRANSITION (OLD shadow → NEW enforce; migration 0014):
+  // the store records what changed, never what the caller claims. One statement, one row, no false success possible.
+  const up = await c.env.DB.prepare(
+    "UPDATE agents SET pop_mode = 'enforce' WHERE id = ? AND pop_jkt = ? AND pop_bound_at = ? AND pop_mode = 'shadow' " +
+    "AND NOT EXISTS (SELECT 1 FROM pop_audit WHERE agent_id = ? AND acting_for IS NULL AND outcome IN ('would_deny','denied') AND rowid > ?)"
+  ).bind(id, a.jkt, a.bound_at, id, cov.snapshot_rowid).run();
   if (!up.meta.changes) {
     // Distinguish "adverse evidence arrived" from "epoch/transition changed" so the abort row names the cause.
     const late = await c.env.DB.prepare(lateQ).bind(id, cov.snapshot_rowid).first<{ n: number }>();
@@ -127,7 +121,7 @@ admin.post('/pop/promote/:id', async (c) => {
     await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promotion_aborted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { reason: 'key changed between evidence snapshot and promotion', jkt: a.jkt } });
     return c.json({ ok: false, error: { code: 'PROMOTION_CONFLICT', message: 'binding changed while promoting; re-evaluate' }, meta: { request_id: generateId(), timestamp: now() } }, 409);
   }
-  return c.json(success({ agent_id: id, pop_mode: 'enforce', audited_atomically: true, evidence: { proven: a.proven, would_deny: a.would_deny, window_days: cov.window_days } }));
+  return c.json(success({ agent_id: id, pop_mode: 'enforce', audited_by: 'trigger trg_agents_pop_promoted', evidence: { proven: a.proven, would_deny: a.would_deny, window_days: cov.window_days } }));
 });
 
 // POST /v1/admin/pop/demote/:id — enforce → shadow for ONE agent (never the fleet)

@@ -18,6 +18,15 @@ export async function handleScheduled(env: Env): Promise<void> {
     if ((pr.meta?.changes ?? 0) > 0) console.log('[cron] pruned dpop_jti rows', pr.meta.changes);
   } catch (e) { console.error('[cron] dpop_jti prune failed (non-fatal)', String(e)); }
 
+  // ── 0b. Retention (round 7): deleg_fail rows older than 8 days; pop_audit rows older than 30 days (coverage window is 7d, promotion max 90d query) ─
+  try {
+    const d8 = new Date(Date.now() - 8 * 86400_000).toISOString().slice(0, 13);
+    await env.DB.prepare('DELETE FROM deleg_fail WHERE hour < ?').bind(d8).run();
+    const d90 = new Date(Date.now() - 90 * 86400_000).toISOString();
+    const pa = await env.DB.prepare('DELETE FROM pop_audit WHERE created_at < ?').bind(d90).run();
+    if ((pa.meta?.changes ?? 0) > 0) console.log('[cron] pruned pop_audit rows', pa.meta.changes);
+  } catch (e) { console.error('[cron] retention prune failed (non-fatal)', String(e)); }
+
   // ── 1. Expire stale requests ────────────────────────────────────────────────
   // D1 SQLite does not support RETURNING; SELECT first, then UPDATE.
   const staleRequests = await env.DB.prepare(`
