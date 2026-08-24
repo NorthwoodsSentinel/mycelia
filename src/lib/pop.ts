@@ -39,14 +39,26 @@ export async function decidePop(args: {
   now?: number;
 }): Promise<PopDecision> {
   const mode = effectiveMode(args.agent.pop_mode, args.ceiling);
-  if (!args.agent.pop_jkt || !args.agent.pop_jwk) return { outcome: 'ambient', mode };
+  const hard = (code: string, message: string): PopDecision => ({ outcome: 'denied', mode, code, message });
+  // H2: PoP state is all-or-nothing. A half-written row or an unknown mode is a refusal, never a downgrade to ambient.
+  const hasJkt = !!args.agent.pop_jkt, hasJwk = !!args.agent.pop_jwk;
+  if (hasJkt !== hasJwk) return hard('POP_STATE_CORRUPT', 'pop binding is partial; admin recovery required');
+  if (args.agent.pop_mode != null && !(args.agent.pop_mode in RANK)) return hard('POP_STATE_CORRUPT', 'pop_mode is not a known value');
+  if (!hasJkt) {
+    // C1: a Delegation header on an unbound agent can never be valid — refuse rather than fall through as the root.
+    if (args.delegationHeader) return hard('DELEG_ROOT_UNBOUND', 'Delegation presented but the root agent has no bound key');
+    return { outcome: 'ambient', mode };
+  }
+  // H6: bounded inputs before any parsing.
+  if (args.dpopHeader && args.dpopHeader.length > 4096) return hard('POP_MALFORMED', 'DPoP header exceeds 4096 bytes');
+  if (args.delegationHeader && args.delegationHeader.length > 16384) return hard('DELEG_MALFORMED', 'Delegation header exceeds 16384 bytes');
   const deny = (code: string, message: string): PopDecision => ({ outcome: mode === 'enforce' ? 'denied' : 'would_deny', mode, code, message });
 
   let rootJwk: OkpJwk;
-  try { rootJwk = JSON.parse(args.agent.pop_jwk); if (!isOkpJwk(rootJwk)) throw new Error('bad jwk'); }
-  catch { return deny('POP_KEY_MISMATCH', 'stored pop_jwk is unreadable; rebind required'); }
+  try { rootJwk = JSON.parse(args.agent.pop_jwk!); if (!isOkpJwk(rootJwk)) throw new Error('bad jwk'); }
+  catch { return hard('POP_STATE_CORRUPT', 'stored pop_jwk is unreadable; admin recovery required'); }
 
-  let expectedJkt = args.agent.pop_jkt;
+  let expectedJkt: string = args.agent.pop_jkt!;
   let acting_for: string | undefined;
   let delegated_scope: string[] | undefined;
 
@@ -55,23 +67,25 @@ export async function decidePop(args: {
     try {
       const pad = args.delegationHeader.length % 4 === 0 ? '' : '='.repeat(4 - (args.delegationHeader.length % 4));
       chain = JSON.parse(atob(args.delegationHeader.replace(/-/g, '+').replace(/_/g, '/') + pad));
-    } catch { return deny('DELEG_MALFORMED', 'Delegation header is not base64url JSON'); }
-    const d = await verifyDelegation(chain, { rootJkt: args.agent.pop_jkt, rootJwk, now: args.now });
-    if (!d.ok) return deny(d.code, d.message);
+    } catch { return hard('DELEG_MALFORMED', 'Delegation header is not base64url JSON'); }
+    // C1: delegation has no legacy — a presented chain that fails is a HARD deny in every mode.
+    const d = await verifyDelegation(chain, { rootJkt: args.agent.pop_jkt!, rootJwk, now: args.now });
+    if (!d.ok) return hard(d.code, d.message);
     expectedJkt = d.leafJkt;            // the presenter must prove possession of the LEAF key
     acting_for = args.agent.id;         // root pinned from the DB row, never from the chain
     delegated_scope = d.scope;
   }
 
-  if (!args.dpopHeader) return deny('POP_REQUIRED', 'DPoP header missing');
+  if (!args.dpopHeader) return acting_for ? hard('POP_REQUIRED', 'delegated requests must carry a DPoP proof of the leaf key') : deny('POP_REQUIRED', 'DPoP header missing');
   const ath = await sha256b64url(args.bearer);
   const r = await verifyDpop(args.dpopHeader, {
     htm: args.method, htu: args.url, ath, expectedJkt, now: args.now, agentId: args.agent.id, jtiStore: d1JtiStore(args.db),
   });
   if (!r.ok) {
     // Store-unavailable is a REFUSAL even in shadow: we cannot claim "would_deny" or "proven" without the store.
-    if (r.code === 'POP_STORE_UNAVAILABLE') return { outcome: 'denied', mode, code: r.code, message: r.message };
-    return deny(r.code, r.message);
+    if (r.code === 'POP_STORE_UNAVAILABLE') return hard(r.code, 'proof store unavailable; request refused');
+    // C1: a delegated presenter whose leaf proof fails is a HARD deny — it must never fall through as the root.
+    return acting_for ? hard(r.code, r.message) : deny(r.code, r.message);
   }
   return { outcome: 'proven', mode, jkt: r.jkt, acting_for, delegated_scope };
 }
@@ -80,6 +94,6 @@ export async function writePopAudit(db: D1Database, row: {
   agent_id: string; outcome: string; reason?: string | null; htm: string; htu: string; arm: string; acting_for?: string | null;
 }): Promise<void> {
   await db.prepare('INSERT INTO pop_audit (id, agent_id, outcome, reason, htm, htu, arm, acting_for, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-    .bind(crypto.randomUUID(), row.agent_id, row.outcome, row.reason ?? null, row.htm, row.htu.slice(0, 512), row.arm, row.acting_for ?? null, new Date().toISOString())
+    .bind(crypto.randomUUID(), row.agent_id, row.outcome, row.reason ?? null, row.htm, row.htu.split('?')[0].split('#')[0].slice(0, 512), row.arm, row.acting_for ?? null, new Date().toISOString())
     .run();
 }

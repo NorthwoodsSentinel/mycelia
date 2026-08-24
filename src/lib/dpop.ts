@@ -97,6 +97,7 @@ export async function verifyDpop(proof: string | null | undefined, opts: VerifyD
   if (typeof proof !== 'string' || proof.length === 0) return fail('POP_MALFORMED', 'DPoP header missing');
   const parts = proof.split('.');
   if (parts.length !== 3) return fail('POP_MALFORMED', 'DPoP proof must be a compact JWS (three segments)');
+  if (!parts.every((p) => /^[A-Za-z0-9_-]+$/.test(p))) return fail('POP_MALFORMED', 'DPoP segments must be strict base64url (no padding, no +/)');
 
   let header: any, payload: any;
   try {
@@ -145,7 +146,8 @@ export async function verifyDpop(proof: string | null | undefined, opts: VerifyD
   try {
     fresh = await opts.jtiStore.spend(payload.jti, opts.agentId, payload.iat);
   } catch (e: any) {
-    return fail('POP_STORE_UNAVAILABLE', `jti store unavailable; refusing rather than assuming unspent (${e?.message ?? e})`);
+    console.error('dpop jti store error', String(e?.message ?? e));
+    return fail('POP_STORE_UNAVAILABLE', 'jti store unavailable; refusing rather than assuming unspent');
   }
   if (!fresh) return fail('POP_JTI_REPLAY', 'jti already spent');
 

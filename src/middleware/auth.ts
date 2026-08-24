@@ -108,16 +108,22 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: { aut
 
     if (pop.outcome === 'denied') {
       await defer(audit('denied', pop.code));
-      const status = pop.code === 'POP_STORE_UNAVAILABLE' ? 503 : 401;
+      const status = pop.code === 'POP_STORE_UNAVAILABLE' ? 503 : (pop.code.startsWith('DELEG_') ? 403 : 401);
       c.header('WWW-Authenticate', 'DPoP algs="EdDSA"');
       return c.json({
         ok: false,
-        error: { code: pop.code === 'POP_STORE_UNAVAILABLE' ? pop.code : (c.req.header('DPoP') ? pop.code : 'POP_REQUIRED'), message: pop.message },
+        error: { code: pop.code, message: pop.message },
         meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() }
       }, status);
     }
     if (pop.outcome === 'would_deny') {
-      await defer(audit('would_deny', pop.code));
+      // H4: the would_deny row IS the evidence the promotion gate reads. If it cannot be written, the request is refused —
+      // otherwise an observability failure becomes a clean shadow record.
+      try { await writePopAudit(c.env.DB, { agent_id: agent.id, outcome: 'would_deny', reason: pop.code, htm, htu, arm: pop.mode }); }
+      catch (e) {
+        console.error('pop_audit would_deny write failed; refusing', String(e));
+        return c.json({ ok: false, error: { code: 'POP_AUDIT_UNAVAILABLE', message: 'shadow evidence store unavailable; request refused' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 503);
+      }
       // In-band signal: the keyless/invalid client sees its own future denial on every call.
       c.header('PoP-Shadow', `would_deny; reason=${c.req.header('DPoP') ? pop.code : 'POP_REQUIRED'}`);
     } else {

@@ -37,7 +37,7 @@ app.use('*', async (c, next) => {
 // Health check — runs after mode validation so an unconfigured node is visible.
 app.get('/health', (c) => {
   const mode = c.env.MODE ?? 'UNSET';
-  return c.json({ ok: true, service: 'mycelia', version: '0.3.0-pop', mode, pop_ceiling: c.env.POP_CEILING ?? 'enforce' });
+  return c.json({ ok: true, service: 'mycelia', version: '0.3.0-pop', mode });
 });
 
 // Route mounting

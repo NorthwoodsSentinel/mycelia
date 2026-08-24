@@ -313,8 +313,13 @@ agents.post('/me/pop-key', requireAgentKey, async (c) => {
 
   const boundAt = now();
   const nextMode = row?.pop_mode === 'enforce' ? 'enforce' : 'shadow';   // first bind → shadow; rotation keeps enforce
-  await c.env.DB.prepare('UPDATE agents SET pop_jwk = ?, pop_jkt = ?, pop_bound_at = ?, pop_mode = ? WHERE id = ?')
-    .bind(JSON.stringify(newJwk), newJkt, boundAt, nextMode, auth.agent_id).run();
+  // H1: compare-and-swap against the binding observed at authentication — two concurrent first-binds cannot both win.
+  const cas = row?.pop_jkt
+    ? await c.env.DB.prepare('UPDATE agents SET pop_jwk = ?, pop_jkt = ?, pop_bound_at = ?, pop_mode = ? WHERE id = ? AND pop_jkt = ?').bind(JSON.stringify(newJwk), newJkt, boundAt, nextMode, auth.agent_id, row.pop_jkt).run()
+    : await c.env.DB.prepare('UPDATE agents SET pop_jwk = ?, pop_jkt = ?, pop_bound_at = ?, pop_mode = ? WHERE id = ? AND pop_jkt IS NULL').bind(JSON.stringify(newJwk), newJkt, boundAt, nextMode, auth.agent_id).run();
+  if (!cas.meta.changes) {
+    return c.json({ ok: false, error: { code: 'POP_BIND_CONFLICT', message: 'binding changed concurrently; re-read and retry with a proof under the current key' }, meta: { request_id: generateId(), timestamp: now() } }, 409);
+  }
   try {
     await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_key_bound' as any, actor_id: auth.agent_id, target_type: 'agent', target_id: auth.agent_id, detail: { jkt: newJkt, rotated: !!row?.pop_jkt, pop_mode: nextMode } });
   } catch (e) { console.error('[pop-key] audit failed', String(e)); }

@@ -41,7 +41,8 @@ const PROMOTE = { min_proven: 20, max_would_deny: 0 } as const;
 async function popCoverage(db: D1Database, days = POP_WINDOW_DAYS) {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
   const agents = (await db.prepare('SELECT id, name, pop_jkt, pop_mode, pop_bound_at FROM agents WHERE status = ?').bind('active').all<{ id: string; name: string; pop_jkt: string | null; pop_mode: string; pop_bound_at: string | null }>()).results;
-  const rows = (await db.prepare('SELECT agent_id, outcome, reason, COUNT(*) AS n, MAX(created_at) AS last FROM pop_audit WHERE created_at >= ? GROUP BY agent_id, outcome, reason').bind(since).all<{ agent_id: string; outcome: string; reason: string | null; n: number; last: string }>()).results;
+  // H3: evidence counts only rows written since the CURRENT binding, and only direct root proofs (acting_for IS NULL) count as proven.
+  const rows = (await db.prepare('SELECT p.agent_id, p.outcome, p.reason, COUNT(*) AS n, MAX(p.created_at) AS last FROM pop_audit p JOIN agents a ON a.id = p.agent_id WHERE p.created_at >= ? AND (a.pop_bound_at IS NULL OR p.created_at >= a.pop_bound_at) AND (p.outcome != ? OR p.acting_for IS NULL) GROUP BY p.agent_id, p.outcome, p.reason').bind(since, 'proven').all<{ agent_id: string; outcome: string; reason: string | null; n: number; last: string }>()).results;
   const by: Record<string, any> = {};
   for (const a of agents) by[a.id] = { agent_id: a.id, name: a.name, pop_mode: a.pop_mode, bound: !!a.pop_jkt, bound_at: a.pop_bound_at, proven: 0, ambient: 0, would_deny: 0, denied: 0, last_reason: null as string | null, last_seen: null as string | null, population: 'ambient' };
   for (const r of rows) {
@@ -66,6 +67,7 @@ function promotionBlockers(a: any): { code: string; observed: number | string; t
   if (a.population === 'unobserved') blockers.push({ code: 'UNOBSERVED', observed: 0, threshold: '>0 rows in window' });
   if (a.proven < PROMOTE.min_proven) blockers.push({ code: 'MIN_PROVEN', observed: a.proven, threshold: PROMOTE.min_proven });
   if (a.would_deny > PROMOTE.max_would_deny) blockers.push({ code: 'WOULD_DENY_PRESENT', observed: a.would_deny, threshold: PROMOTE.max_would_deny });
+  if (a.denied > 0) blockers.push({ code: 'DENIED_PRESENT', observed: a.denied, threshold: 0 });
   return blockers;
 }
 
@@ -84,26 +86,27 @@ admin.post('/pop/promote/:id', async (c) => {
   if (!a) return c.json(error('NOT_FOUND', 'Agent not found or inactive', 404).body, 404);
   const blockers = promotionBlockers(a);
   if (blockers.length) return c.json({ ok: false, error: { code: 'PROMOTION_BLOCKED', message: 'Blockers present; none may be waived', blockers }, meta: { request_id: generateId(), timestamp: now() } }, 409);
-  await c.env.DB.prepare('UPDATE agents SET pop_mode = ? WHERE id = ?').bind('enforce', id).run();
+  // H5: audit BEFORE the security mutation — a failed audit means no mutation.
   await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promoted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { from: a.pop_mode, to: 'enforce', proven: a.proven, window_days: cov.window_days } });
+  await c.env.DB.prepare('UPDATE agents SET pop_mode = ? WHERE id = ? AND pop_jkt IS NOT NULL').bind('enforce', id).run();
   return c.json(success({ agent_id: id, pop_mode: 'enforce', evidence: { proven: a.proven, would_deny: a.would_deny, window_days: cov.window_days } }));
 });
 
 // POST /v1/admin/pop/demote/:id — enforce → shadow for ONE agent (never the fleet)
 admin.post('/pop/demote/:id', async (c) => {
   const id = c.req.param('id');
+  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_demoted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { to: 'shadow' } });
   const r = await c.env.DB.prepare('UPDATE agents SET pop_mode = ? WHERE id = ? AND pop_jkt IS NOT NULL').bind('shadow', id).run();
   if (!r.meta.changes) return c.json(error('NOT_FOUND', 'Agent not found or not bound', 404).body, 404);
-  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_demoted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { to: 'shadow' } });
   return c.json(success({ agent_id: id, pop_mode: 'shadow' }));
 });
 
 // DELETE /v1/admin/pop/:id — recovery ceremony: clear the binding (lost key). Admin only, one agent.
 admin.delete('/pop/:id', async (c) => {
   const id = c.req.param('id');
+  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_key_cleared' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { reason: 'admin recovery ceremony' } });
   const r = await c.env.DB.prepare('UPDATE agents SET pop_jwk = NULL, pop_jkt = NULL, pop_bound_at = NULL, pop_mode = ? WHERE id = ?').bind('ambient', id).run();
   if (!r.meta.changes) return c.json(error('NOT_FOUND', 'Agent not found', 404).body, 404);
-  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_key_cleared' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { reason: 'admin recovery ceremony' } });
   return c.json(success({ agent_id: id, pop_mode: 'ambient', pop_bound: false }));
 });
 

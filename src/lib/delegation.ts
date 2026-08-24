@@ -86,9 +86,16 @@ function validLink(x: unknown): x is DelegationLink {
   const l = x as any;
   if (!l || typeof l !== 'object' || typeof l.sig !== 'string' || !l.body || typeof l.body !== 'object') return false;
   const b = l.body;
-  return typeof b.delegated_by === 'string' && typeof b.delegated_to === 'string' && isOkpJwk(b.to_jwk)
-    && Array.isArray(b.scope) && b.scope.every((s: unknown) => typeof s === 'string' && s.length > 0 && s.length <= 128)
-    && typeof b.exp === 'number' && typeof b.depth === 'number' && typeof b.max_depth === 'number' && typeof b.nonce === 'string';
+  const KEYS = new Set(['delegated_by', 'delegated_to', 'to_jwk', 'scope', 'exp', 'nbf', 'depth', 'max_depth', 'nonce']);
+  if (Object.keys(b).some((k) => !KEYS.has(k))) return false;                       // H6: no arbitrary body properties
+  if (Object.keys(l).some((k) => k !== 'body' && k !== 'sig')) return false;
+  if (l.sig.length > 256) return false;
+  return typeof b.delegated_by === 'string' && b.delegated_by.length <= 128 && typeof b.delegated_to === 'string' && b.delegated_to.length <= 128 && isOkpJwk(b.to_jwk)
+    && Object.keys(b.to_jwk).every((k) => ['kty', 'crv', 'x'].includes(k)) && (b.to_jwk as any).x.length <= 128
+    && Array.isArray(b.scope) && b.scope.length > 0 && b.scope.length <= 32 && b.scope.every((s: unknown) => typeof s === 'string' && s.length > 0 && s.length <= 128)
+    && typeof b.exp === 'number' && Number.isFinite(b.exp) && (b.nbf === undefined || (typeof b.nbf === 'number' && Number.isFinite(b.nbf)))
+    && typeof b.depth === 'number' && typeof b.max_depth === 'number' && Number.isInteger(b.max_depth) && b.max_depth >= 0 && b.max_depth <= 8
+    && typeof b.nonce === 'string' && b.nonce.length > 0 && b.nonce.length <= 128;
 }
 
 /**
@@ -108,6 +115,7 @@ export async function verifyDelegation(
   let prevJwk = opts.rootJwk;
   let prevScope = opts.rootScope ?? ['*'];
   let prevExp = Number.POSITIVE_INFINITY;
+  let prevNbf = Number.NEGATIVE_INFINITY;
   let maxDepth = Number.POSITIVE_INFINITY;
 
   for (let i = 0; i < chain.length; i++) {
@@ -116,10 +124,16 @@ export async function verifyDelegation(
     const b = link.body;
     if (b.delegated_by !== prevJkt) return fail('DELEG_CHAIN_BREAK', `link ${i} delegated_by ${b.delegated_by.slice(0, 8)}… != previous key`);
     if (b.depth !== i) return fail('DELEG_CHAIN_BREAK', `link ${i} depth ${b.depth} != ${i}`);
-    if (i === 0) maxDepth = b.max_depth; else if (b.max_depth > maxDepth) return fail('DELEG_TOO_DEEP', `link ${i} raised max_depth`);
+    if (b.max_depth > maxDepth) return fail('DELEG_TOO_DEEP', `link ${i} raised max_depth`);   // C3: non-increasing along the chain
+    maxDepth = Math.min(maxDepth, b.max_depth);
     if (b.depth >= maxDepth) return fail('DELEG_TOO_DEEP', `link ${i} depth ${b.depth} >= max_depth ${maxDepth}`);
     if (!scopesCovered(prevScope, b.scope)) return fail('DELEG_SCOPE_WIDENS', `link ${i} scope not covered by parent scope`);
     if (b.exp > prevExp) return fail('DELEG_EXPIRY_EXCEEDS_PARENT', `link ${i} exp ${b.exp} > parent ${prevExp}`);
+    // C2: nbf is checked on EVERY link and may only move later — a descendant cannot remove an ancestor's start time.
+    const nbf = b.nbf ?? prevNbf;
+    if (nbf < prevNbf) return fail('DELEG_NOT_YET_VALID', `link ${i} nbf earlier than parent`);
+    if (now < nbf) return fail('DELEG_NOT_YET_VALID', `link ${i} not yet valid (nbf ${nbf}, now ${now})`);
+    if (now >= b.exp) return fail('DELEG_EXPIRED', `link ${i} expired at ${b.exp} (now ${now})`);
     if ((await jwkThumbprint(b.to_jwk)) !== b.delegated_to) return fail('DELEG_MALFORMED', `link ${i} to_jwk thumbprint != delegated_to`);
 
     let sigOk = false;
@@ -129,11 +143,8 @@ export async function verifyDelegation(
     } catch { sigOk = false; }
     if (!sigOk) return fail('DELEG_BAD_SIGNATURE', `link ${i} signature does not verify under the previous key`);
 
-    prevJkt = b.delegated_to; prevJwk = b.to_jwk; prevScope = b.scope; prevExp = b.exp;
+    prevJkt = b.delegated_to; prevJwk = b.to_jwk; prevScope = b.scope; prevExp = b.exp; prevNbf = nbf;
   }
-  const leaf = (chain as DelegationLink[])[chain.length - 1].body;
-  if (leaf.nbf != null && now < leaf.nbf) return fail('DELEG_NOT_YET_VALID', 'leaf nbf in the future');
-  if (now >= leaf.exp) return fail('DELEG_EXPIRED', `leaf expired at ${leaf.exp} (now ${now})`);
   return { ok: true, leafJkt: prevJkt, leafJwk: prevJwk, scope: prevScope, depth: chain.length - 1, rootJkt: opts.rootJkt };
 }
 

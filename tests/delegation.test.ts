@@ -115,3 +115,40 @@ describe('verifyDelegation', () => {
     expect(accepted).toBeGreaterThan(0);
   });
 });
+
+describe('codex audit fixes (2026-08-24)', () => {
+  it('C2: a descendant cannot remove an ancestor future nbf', async () => {
+    const root = await generateDpopKeypair(); const a = await generateDpopKeypair(); const b = await generateDpopKeypair();
+    const l0 = await signLink({ delegated_by: root.jkt, delegated_to: a.jkt, to_jwk: a.publicJwk, scope: ['bus:*'], exp: NOW + 3600, nbf: NOW + 600, depth: 0, max_depth: 3, nonce: 'n0' }, root.privateKey);
+    const l1 = await signLink({ delegated_by: a.jkt, delegated_to: b.jkt, to_jwk: b.publicJwk, scope: ['bus:respond:*'], exp: NOW + 1800, depth: 1, max_depth: 3, nonce: 'n1' }, a.privateKey);
+    const r = await verifyDelegation([l0, l1], { rootJkt: root.jkt, rootJwk: root.publicJwk, now: NOW });
+    expect(r.ok).toBe(false); if (!r.ok) expect(r.code).toBe('DELEG_NOT_YET_VALID');
+    const later = await verifyDelegation([l0, l1], { rootJkt: root.jkt, rootJwk: root.publicJwk, now: NOW + 700 });
+    expect(later.ok).toBe(true);
+  });
+  it('C2b: a child nbf earlier than the parent nbf is rejected', async () => {
+    const root = await generateDpopKeypair(); const a = await generateDpopKeypair(); const b = await generateDpopKeypair();
+    const l0 = await signLink({ delegated_by: root.jkt, delegated_to: a.jkt, to_jwk: a.publicJwk, scope: ['bus:*'], exp: NOW + 3600, nbf: NOW - 10, depth: 0, max_depth: 3, nonce: 'n0' }, root.privateKey);
+    const l1 = await signLink({ delegated_by: a.jkt, delegated_to: b.jkt, to_jwk: b.publicJwk, scope: ['bus:*'], exp: NOW + 1800, nbf: NOW - 100, depth: 1, max_depth: 3, nonce: 'n1' }, a.privateKey);
+    const r = await verifyDelegation([l0, l1], { rootJkt: root.jkt, rootJwk: root.publicJwk, now: NOW });
+    expect(r.ok).toBe(false); if (!r.ok) expect(r.code).toBe('DELEG_NOT_YET_VALID');
+  });
+  it('C3: an intermediate cannot restore a lowered max_depth', async () => {
+    const root = await generateDpopKeypair(); const a = await generateDpopKeypair(); const b = await generateDpopKeypair(); const cc = await generateDpopKeypair();
+    const l0 = await signLink({ delegated_by: root.jkt, delegated_to: a.jkt, to_jwk: a.publicJwk, scope: ['bus:*'], exp: NOW + 3600, depth: 0, max_depth: 3, nonce: 'n0' }, root.privateKey);
+    const l1 = await signLink({ delegated_by: a.jkt, delegated_to: b.jkt, to_jwk: b.publicJwk, scope: ['bus:*'], exp: NOW + 3000, depth: 1, max_depth: 2, nonce: 'n1' }, a.privateKey);
+    const l2 = await signLink({ delegated_by: b.jkt, delegated_to: cc.jkt, to_jwk: cc.publicJwk, scope: ['bus:*'], exp: NOW + 2000, depth: 2, max_depth: 3, nonce: 'n2' }, b.privateKey);
+    const r = await verifyDelegation([l0, l1, l2], { rootJkt: root.jkt, rootJwk: root.publicJwk, now: NOW });
+    expect(r.ok).toBe(false); if (!r.ok) expect(r.code).toBe('DELEG_TOO_DEEP');
+  });
+  it('H6: extra body properties, oversized scope arrays, and an expired intermediate are rejected', async () => {
+    const root = await generateDpopKeypair(); const a = await generateDpopKeypair();
+    const body: any = { delegated_by: root.jkt, delegated_to: a.jkt, to_jwk: a.publicJwk, scope: ['bus:*'], exp: NOW + 3600, depth: 0, max_depth: 3, nonce: 'n0', extra: { deep: { nest: 1 } } };
+    const l = await signLink(body, root.privateKey);
+    const r1 = await verifyDelegation([l], { rootJkt: root.jkt, rootJwk: root.publicJwk, now: NOW });
+    expect(r1.ok).toBe(false); if (!r1.ok) expect(r1.code).toBe('DELEG_MALFORMED');
+    const big = await signLink({ delegated_by: root.jkt, delegated_to: a.jkt, to_jwk: a.publicJwk, scope: Array.from({ length: 33 }, (_, i) => `s:${i}`), exp: NOW + 3600, depth: 0, max_depth: 3, nonce: 'n0' }, root.privateKey);
+    const r2 = await verifyDelegation([big], { rootJkt: root.jkt, rootJwk: root.publicJwk, now: NOW });
+    expect(r2.ok).toBe(false); if (!r2.ok) expect(r2.code).toBe('DELEG_MALFORMED');
+  });
+});
