@@ -3,7 +3,7 @@ import { createMiddleware } from 'hono/factory';
 import type { Env } from '../types';
 import { generateApiKey } from '../middleware/auth';
 import { writeAuditLog } from '../lib/audit';
-import { success, error, now } from '../lib/utils';
+import { success, error, now, generateId } from '../lib/utils';
 
 /**
  * Admin auth middleware — validates bearer token against ADMIN_API_KEY env var.
@@ -33,6 +33,79 @@ const requireAdmin = createMiddleware<{ Bindings: Env }>(
 const admin = new Hono<{ Bindings: Env }>();
 
 admin.use('*', requireAdmin);
+
+// ─── WS1 (2026-08-24): proof-of-possession coverage + per-agent promotion ────
+const POP_WINDOW_DAYS = 7;
+const PROMOTE = { min_proven: 20, max_would_deny: 0 } as const;
+
+async function popCoverage(db: D1Database, days = POP_WINDOW_DAYS) {
+  const since = new Date(Date.now() - days * 86400_000).toISOString();
+  const agents = (await db.prepare('SELECT id, name, pop_jkt, pop_mode, pop_bound_at FROM agents WHERE status = ?').bind('active').all<{ id: string; name: string; pop_jkt: string | null; pop_mode: string; pop_bound_at: string | null }>()).results;
+  const rows = (await db.prepare('SELECT agent_id, outcome, reason, COUNT(*) AS n, MAX(created_at) AS last FROM pop_audit WHERE created_at >= ? GROUP BY agent_id, outcome, reason').bind(since).all<{ agent_id: string; outcome: string; reason: string | null; n: number; last: string }>()).results;
+  const by: Record<string, any> = {};
+  for (const a of agents) by[a.id] = { agent_id: a.id, name: a.name, pop_mode: a.pop_mode, bound: !!a.pop_jkt, bound_at: a.pop_bound_at, proven: 0, ambient: 0, would_deny: 0, denied: 0, last_reason: null as string | null, last_seen: null as string | null, population: 'ambient' };
+  for (const r of rows) {
+    const b = by[r.agent_id] ?? (by[r.agent_id] = { agent_id: r.agent_id, name: null, pop_mode: null, bound: false, proven: 0, ambient: 0, would_deny: 0, denied: 0, last_reason: null, last_seen: null, population: 'unknown' });
+    b[r.outcome] = (b[r.outcome] ?? 0) + Number(r.n);
+    if (r.reason && (r.outcome === 'would_deny' || r.outcome === 'denied')) b.last_reason = r.reason;
+    if (!b.last_seen || r.last > b.last_seen) b.last_seen = r.last;
+  }
+  // Population: the number that a global metric hides. `unobserved` = bound but no rows in the window.
+  const totals = { proven: 0, ambient: 0, would_deny: 0, denied: 0, unobserved: 0, bound_agents: 0, agents: agents.length };
+  for (const b of Object.values(by)) {
+    if (b.bound) { totals.bound_agents++; b.population = (b.proven + b.would_deny + b.denied) === 0 ? 'unobserved' : (b.would_deny > 0 ? 'would_deny' : 'proven'); }
+    totals.proven += b.proven; totals.ambient += b.ambient; totals.would_deny += b.would_deny; totals.denied += b.denied;
+    if (b.population === 'unobserved') totals.unobserved++;
+  }
+  return { window_days: days, since, ...totals, by_agent: Object.values(by).sort((x: any, y: any) => (y.would_deny - x.would_deny) || (y.proven - x.proven)) };
+}
+
+function promotionBlockers(a: any): { code: string; observed: number | string; threshold: number | string }[] {
+  const blockers = [];
+  if (!a.bound) blockers.push({ code: 'NOT_BOUND', observed: 'ambient', threshold: 'bound key' });
+  if (a.population === 'unobserved') blockers.push({ code: 'UNOBSERVED', observed: 0, threshold: '>0 rows in window' });
+  if (a.proven < PROMOTE.min_proven) blockers.push({ code: 'MIN_PROVEN', observed: a.proven, threshold: PROMOTE.min_proven });
+  if (a.would_deny > PROMOTE.max_would_deny) blockers.push({ code: 'WOULD_DENY_PRESENT', observed: a.would_deny, threshold: PROMOTE.max_would_deny });
+  return blockers;
+}
+
+// GET /v1/admin/pop/coverage[?days=7] — proven / ambient / would_deny / unobserved, per agent
+admin.get('/pop/coverage', async (c) => {
+  const days = Math.min(Math.max(Number(c.req.query('days') ?? POP_WINDOW_DAYS), 1), 90);
+  const cov = await popCoverage(c.env.DB, days);
+  return c.json(success({ ...cov, ceiling: c.env.POP_CEILING ?? 'enforce', promotion: cov.by_agent.map((a: any) => ({ agent_id: a.agent_id, name: a.name, pop_mode: a.pop_mode, ready: promotionBlockers(a).length === 0, blockers: promotionBlockers(a) })) }));
+});
+
+// POST /v1/admin/pop/promote/:id — shadow → enforce for ONE agent, only when the blocker list is empty
+admin.post('/pop/promote/:id', async (c) => {
+  const id = c.req.param('id');
+  const cov = await popCoverage(c.env.DB);
+  const a = cov.by_agent.find((x: any) => x.agent_id === id);
+  if (!a) return c.json(error('NOT_FOUND', 'Agent not found or inactive', 404).body, 404);
+  const blockers = promotionBlockers(a);
+  if (blockers.length) return c.json({ ok: false, error: { code: 'PROMOTION_BLOCKED', message: 'Blockers present; none may be waived', blockers }, meta: { request_id: generateId(), timestamp: now() } }, 409);
+  await c.env.DB.prepare('UPDATE agents SET pop_mode = ? WHERE id = ?').bind('enforce', id).run();
+  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promoted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { from: a.pop_mode, to: 'enforce', proven: a.proven, window_days: cov.window_days } });
+  return c.json(success({ agent_id: id, pop_mode: 'enforce', evidence: { proven: a.proven, would_deny: a.would_deny, window_days: cov.window_days } }));
+});
+
+// POST /v1/admin/pop/demote/:id — enforce → shadow for ONE agent (never the fleet)
+admin.post('/pop/demote/:id', async (c) => {
+  const id = c.req.param('id');
+  const r = await c.env.DB.prepare('UPDATE agents SET pop_mode = ? WHERE id = ? AND pop_jkt IS NOT NULL').bind('shadow', id).run();
+  if (!r.meta.changes) return c.json(error('NOT_FOUND', 'Agent not found or not bound', 404).body, 404);
+  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_demoted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { to: 'shadow' } });
+  return c.json(success({ agent_id: id, pop_mode: 'shadow' }));
+});
+
+// DELETE /v1/admin/pop/:id — recovery ceremony: clear the binding (lost key). Admin only, one agent.
+admin.delete('/pop/:id', async (c) => {
+  const id = c.req.param('id');
+  const r = await c.env.DB.prepare('UPDATE agents SET pop_jwk = NULL, pop_jkt = NULL, pop_bound_at = NULL, pop_mode = ? WHERE id = ?').bind('ambient', id).run();
+  if (!r.meta.changes) return c.json(error('NOT_FOUND', 'Agent not found', 404).body, 404);
+  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_key_cleared' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { reason: 'admin recovery ceremony' } });
+  return c.json(success({ agent_id: id, pop_mode: 'ambient', pop_bound: false }));
+});
 
 // POST /v1/admin/agents/:id/rotate-key — Admin key rotation
 admin.post('/agents/:id/rotate-key', async (c) => {

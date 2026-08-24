@@ -9,6 +9,15 @@ import { now } from './lib/utils';
 export async function handleScheduled(env: Env): Promise<void> {
   const timestamp = now();
 
+  // ── 0. Prune spent DPoP jti rows older than the acceptance window (WS1 2026-08-24). ───────────
+  // A proof older than iat+300s+30s skew can never verify again, so its jti row is only storage.
+  // Rows inside the window are NEVER pruned — that is the one-time guarantee.
+  try {
+    const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const pr = await env.DB.prepare('DELETE FROM dpop_jti WHERE created_at < ?').bind(cutoff).run();
+    if ((pr.meta?.changes ?? 0) > 0) console.log('[cron] pruned dpop_jti rows', pr.meta.changes);
+  } catch (e) { console.error('[cron] dpop_jti prune failed (non-fatal)', String(e)); }
+
   // ── 1. Expire stale requests ────────────────────────────────────────────────
   // D1 SQLite does not support RETURNING; SELECT first, then UPDATE.
   const staleRequests = await env.DB.prepare(`

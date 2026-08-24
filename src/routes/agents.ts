@@ -7,6 +7,7 @@ import { writeAuditLog } from '../lib/audit';
 import { kvInvalidateCapabilityCache } from '../lib/kv';
 import { success, error, generateId, now } from '../lib/utils';
 import { revoke, unrevoke, checkRevoked } from '../lib/revocation';
+import { verifyDpop, d1JtiStore, jwkThumbprint, sha256b64url, isOkpJwk } from '../lib/dpop';
 
 const agents = new Hono<{ Bindings: Env; Variables: { auth: AuthContext } }>();
 
@@ -273,6 +274,58 @@ agents.patch('/:id', requireAgentKey, async (c) => {
   ).bind(agentId).all();
 
   return c.json(success({ agent: { ...agent, capabilities: capabilities.results } }));
+});
+
+// ─── WS1 (2026-08-24): proof-of-possession key binding ──────────────────────
+// POST /v1/agents/me/pop-key — bind (or rotate) the agent's Ed25519 key.
+//   body: { jwk: {kty:"OKP",crv:"Ed25519",x} }
+//   headers: DPoP-New = proof made with the key being bound (proves possession at bind time).
+//   Rotation additionally requires the request's own DPoP (header `DPoP`) to verify under the CURRENT key
+//   (auth.pop === 'proven'); a would_deny in shadow is not enough. Delegated principals are refused outright.
+agents.post('/me/pop-key', requireAgentKey, async (c) => {
+  const auth = c.get('auth');
+  if (auth.acting_for) {
+    return c.json(error('FORBIDDEN' as any, 'Key binding is not delegable (POP_REBIND_NOT_DELEGABLE)', 403).body, 403);
+  }
+  let body: { jwk?: unknown };
+  try { body = await c.req.json(); } catch { return c.json(error('VALIDATION_ERROR', 'JSON body required', 400).body, 400); }
+  if (!isOkpJwk(body.jwk) || 'd' in (body.jwk as any)) {
+    return c.json(error('VALIDATION_ERROR', 'body.jwk must be a PUBLIC OKP/Ed25519 JWK', 400).body, 400);
+  }
+  const newJwk = { kty: 'OKP', crv: 'Ed25519', x: (body.jwk as any).x } as const;
+  const newJkt = await jwkThumbprint(newJwk);
+
+  const row = await c.env.DB.prepare('SELECT pop_jkt, pop_mode FROM agents WHERE id = ?').bind(auth.agent_id).first<{ pop_jkt: string | null; pop_mode: string }>();
+  if (row?.pop_jkt && auth.pop !== 'proven') {
+    c.header('WWW-Authenticate', 'DPoP algs="EdDSA"');
+    return c.json({ ok: false, error: { code: 'POP_REBIND_REQUIRES_CURRENT_KEY', message: 'Rotation requires a valid DPoP proof under the currently bound key' }, meta: { request_id: generateId(), timestamp: now() } }, 401);
+  }
+
+  // Possession of the NEW key, proven in-band.
+  const bearer = (c.req.header('Authorization') ?? '').slice(7);
+  const r = await verifyDpop(c.req.header('DPoP-New'), {
+    htm: c.req.method, htu: c.req.url, ath: await sha256b64url(bearer), expectedJkt: newJkt, agentId: auth.agent_id, jtiStore: d1JtiStore(c.env.DB),
+  });
+  if (!r.ok) {
+    c.header('WWW-Authenticate', 'DPoP algs="EdDSA"');
+    return c.json({ ok: false, error: { code: r.code, message: `DPoP-New: ${r.message}` }, meta: { request_id: generateId(), timestamp: now() } }, r.code === 'POP_STORE_UNAVAILABLE' ? 503 : 401);
+  }
+
+  const boundAt = now();
+  const nextMode = row?.pop_mode === 'enforce' ? 'enforce' : 'shadow';   // first bind → shadow; rotation keeps enforce
+  await c.env.DB.prepare('UPDATE agents SET pop_jwk = ?, pop_jkt = ?, pop_bound_at = ?, pop_mode = ? WHERE id = ?')
+    .bind(JSON.stringify(newJwk), newJkt, boundAt, nextMode, auth.agent_id).run();
+  try {
+    await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_key_bound' as any, actor_id: auth.agent_id, target_type: 'agent', target_id: auth.agent_id, detail: { jkt: newJkt, rotated: !!row?.pop_jkt, pop_mode: nextMode } });
+  } catch (e) { console.error('[pop-key] audit failed', String(e)); }
+  return c.json(success({ agent_id: auth.agent_id, pop_jkt: newJkt, pop_bound_at: boundAt, pop_mode: nextMode, rotated: !!row?.pop_jkt }), row?.pop_jkt ? 200 : 201);
+});
+
+// GET /v1/agents/me/pop — the caller's own PoP state (what the bus thinks of this bearer)
+agents.get('/me/pop', async (c) => {
+  const auth = c.get('auth');
+  const row = await c.env.DB.prepare('SELECT pop_jkt, pop_bound_at, pop_mode FROM agents WHERE id = ?').bind(auth.agent_id).first<{ pop_jkt: string | null; pop_bound_at: string | null; pop_mode: string }>();
+  return c.json(success({ agent_id: auth.agent_id, pop_bound: !!row?.pop_jkt, pop_jkt: row?.pop_jkt ?? null, pop_bound_at: row?.pop_bound_at ?? null, pop_mode: row?.pop_mode ?? 'ambient', effective_mode: auth.pop_mode, this_request: auth.pop, reason: auth.pop_reason ?? null }));
 });
 
 // GET /v1/agents/:id — Public profile

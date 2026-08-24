@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { delegable } from './middleware/auth';
 import { secureHeaders } from 'hono/secure-headers';
 import type { Env } from './types';
 import { handleScheduled } from './cron';
@@ -36,12 +37,17 @@ app.use('*', async (c, next) => {
 // Health check — runs after mode validation so an unconfigured node is visible.
 app.get('/health', (c) => {
   const mode = c.env.MODE ?? 'UNSET';
-  return c.json({ ok: true, service: 'mycelia', version: '0.2.0', mode });
+  return c.json({ ok: true, service: 'mycelia', version: '0.3.0-pop', mode, pop_ceiling: c.env.POP_CEILING ?? 'enforce' });
 });
 
 // Route mounting
 // /v1/agents/register — public self-serve registration (gated by registrationGate in fleet/company).
 // Must be mounted BEFORE /v1/agents so the more-specific path wins.
+// WS1: declare the ONLY delegable paths at the app level so the declaration precedes every router's authMiddleware
+// (two routers share the /v1/requests prefix; the first one's auth ran before claims-responses could declare itself).
+app.use('/v1/requests/:id/claims', delegable('bus:respond'));
+app.use('/v1/requests/:id/responses', delegable('bus:respond'));
+
 app.route('/v1/agents/register', register);
 app.route('/v1/agents', agents);
 app.route('/v1/capabilities', capabilities);

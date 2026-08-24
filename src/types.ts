@@ -14,6 +14,10 @@ export interface Env {
   // 'company'   = private org node; community trust enforcement + fleet tenancy/feed scoping.
   // 'fleet'     = single principal's own agents; trust implicit, enforcement relaxed.
   MODE?: 'fleet' | 'company' | 'community';
+  /** WS1: a one-directional safety brake on proof-of-possession. The effective mode for any agent is
+   *  min(agent.pop_mode, POP_CEILING). 'ambient' < 'shadow' < 'enforce'. It can only LOWER enforcement —
+   *  never promote — so it cannot be the actuator of a shadow/enforce flap. Absent = 'enforce' (no brake). */
+  POP_CEILING?: 'ambient' | 'shadow' | 'enforce';
 }
 
 // ═══ Database Entities ═══
@@ -310,4 +314,13 @@ export interface AuthContext {
   agent_id: string;
   key_type: 'agent' | 'observer';
   owner_id: string;
+  /** WS1 (2026-08-24): proof-of-possession state for this request.
+   *  ambient = agent has no bound key (bearer only); proven = DPoP verified under the bound key;
+   *  would_deny = shadow arm let an invalid/missing proof through and logged it. */
+  pop: 'ambient' | 'proven' | 'would_deny';
+  pop_mode: 'ambient' | 'shadow' | 'enforce';
+  pop_reason?: string;
+  /** Set only when a valid delegation chain was presented: the ROOT agent (from its DB row), and the leaf's scope. */
+  acting_for?: string;
+  delegated_scope?: string[];
 }

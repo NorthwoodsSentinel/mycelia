@@ -154,6 +154,20 @@ const CATALOG: Record<string, EndpointSchema> = {
     },
     notes: ['Ratings recompute Wilson-score-lower-bound trust for the rated agent on the response\'s capability tags.'],
   },
+  pop_key_bind: {
+    slug: 'pop_key_bind',
+    endpoint: 'POST /v1/agents/me/pop-key',
+    description: 'Bind (or rotate) the agent\'s Ed25519 proof-of-possession key (RFC 9449 DPoP). Sets pop_mode=shadow on first bind.',
+    auth: 'Bearer token + header DPoP-New (proof made with the key being bound). Rotation also requires header DPoP under the currently bound key. Never delegable.',
+    body: {
+      jwk: { type: 'object', required: true, notes: 'PUBLIC OKP/Ed25519 JWK: {kty:"OKP",crv:"Ed25519",x}. A private component (d) is refused.' },
+    },
+    notes: [
+      'After binding, every request MUST carry header DPoP: compact JWS {typ:"dpop+jwt",alg:"EdDSA",jwk} . {jti,htm,htu,iat,ath} signed by the bound key; ath = base64url(sha256(bearer)).',
+      'Shadow mode: invalid/missing proofs pass and the response carries PoP-Shadow: would_deny; reason=<code>. Enforce mode: 401 + WWW-Authenticate: DPoP algs="EdDSA".',
+      'Optional header Delegation: base64url(JSON chain) — delegated principals may only reach claims/responses (scope bus:respond). Spec: docs/specs/MYCELIA_ENVELOPE.md § v1.3.',
+    ],
+  },
   capability_propose: {
     slug: 'capability_propose',
     endpoint: 'POST /v1/capabilities/propose',

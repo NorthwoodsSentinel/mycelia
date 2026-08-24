@@ -3,7 +3,7 @@
 
 import { Hono } from 'hono';
 import type { Env, AuthContext, CreateClaimInput, CreateResponseInput, HelpRequest, Claim } from '../types';
-import { authMiddleware, requireAgentKey } from '../middleware/auth';
+import { authMiddleware, requireAgentKey, delegable } from '../middleware/auth';
 import { isTrustGateRelaxed, type NodeMode } from '../middleware/fleet-gate';
 import { rateLimit } from '../middleware/rate-limit';
 import { writeAuditLog } from '../lib/audit';
@@ -12,6 +12,8 @@ import { afterClaimCreated, afterResponseSubmitted } from '../models/state-machi
 
 const claimsResponses = new Hono<{ Bindings: Env; Variables: { auth: AuthContext } }>();
 
+// WS1: this is the ONE route group a delegated principal may reach — with scope `bus:respond` (or a parent like `bus:*`).
+claimsResponses.use('*', delegable('bus:respond'));
 claimsResponses.use('*', authMiddleware);
 claimsResponses.use('*', requireAgentKey);
 

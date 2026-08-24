@@ -1,5 +1,7 @@
 import { createMiddleware } from 'hono/factory';
 import type { Env, AuthContext } from '../types';
+import { decidePop, writePopAudit } from '../lib/pop';
+import { scopeAuthorizes } from '../lib/delegation';
 
 /**
  * Generate a new API key.
@@ -63,8 +65,8 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: { aut
 
     // Look up agent by key prefix, then verify hash
     const agent = await c.env.DB.prepare(
-      'SELECT id, owner_id, api_key_hash, status FROM agents WHERE key_prefix = ?'
-    ).bind(prefix).first<{ id: string; owner_id: string; api_key_hash: string; status: string }>();
+      'SELECT id, owner_id, api_key_hash, status, pop_jkt, pop_jwk, pop_mode FROM agents WHERE key_prefix = ?'
+    ).bind(prefix).first<{ id: string; owner_id: string; api_key_hash: string; status: string; pop_jkt: string | null; pop_jwk: string | null; pop_mode: string | null }>();
 
     if (!agent || agent.api_key_hash !== hash) {
       return c.json({
@@ -87,15 +89,77 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: { aut
       'UPDATE agents SET last_seen_at = ? WHERE id = ?'
     ).bind(new Date().toISOString(), agent.id).run();
 
+    // ── WS1 (2026-08-24): proof of possession. The bearer identifies; the key proves. ──
+    const pop = await decidePop({
+      db: c.env.DB,
+      agent: { id: agent.id, pop_jkt: agent.pop_jkt, pop_jwk: agent.pop_jwk, pop_mode: agent.pop_mode },
+      ceiling: c.env.POP_CEILING,
+      bearer: key,
+      method: c.req.method,
+      url: c.req.url,
+      dpopHeader: c.req.header('DPoP'),
+      delegationHeader: c.req.header('Delegation'),
+    });
+    const htm = c.req.method, htu = c.req.url;
+    const audit = (outcome: string, reason?: string | null, acting_for?: string | null) =>
+      writePopAudit(c.env.DB, { agent_id: agent.id, outcome, reason, htm, htu, arm: pop.mode, acting_for }).catch((e) => console.error('pop_audit write failed', String(e)));
+    // waitUntil when the runtime has an ExecutionContext (Workers); await inline otherwise (tests / non-Worker hosts).
+    const defer = (p: Promise<void>) => { try { c.executionCtx.waitUntil(p); return Promise.resolve(); } catch { return p; } };
+
+    if (pop.outcome === 'denied') {
+      await defer(audit('denied', pop.code));
+      const status = pop.code === 'POP_STORE_UNAVAILABLE' ? 503 : 401;
+      c.header('WWW-Authenticate', 'DPoP algs="EdDSA"');
+      return c.json({
+        ok: false,
+        error: { code: pop.code === 'POP_STORE_UNAVAILABLE' ? pop.code : (c.req.header('DPoP') ? pop.code : 'POP_REQUIRED'), message: pop.message },
+        meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() }
+      }, status);
+    }
+    if (pop.outcome === 'would_deny') {
+      await defer(audit('would_deny', pop.code));
+      // In-band signal: the keyless/invalid client sees its own future denial on every call.
+      c.header('PoP-Shadow', `would_deny; reason=${c.req.header('DPoP') ? pop.code : 'POP_REQUIRED'}`);
+    } else {
+      await defer(audit(pop.outcome, null, pop.outcome === 'proven' ? pop.acting_for ?? null : null));
+    }
+
+    // Delegated principals are DEFAULT-DENY: a route must have declared itself delegable (see `delegable()`),
+    // and the required scope must be covered by the leaf scope. Applies in every mode — delegation has no legacy.
+    if (pop.outcome === 'proven' && pop.acting_for) {
+      const declared = (c as any).get('delegable_scope') as string | undefined;
+      if (!declared) {
+        return c.json({ ok: false, error: { code: 'DELEG_ROUTE_NOT_DELEGABLE', message: 'This route does not accept delegated principals' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 403);
+      }
+      if (!scopeAuthorizes(pop.delegated_scope ?? [], declared)) {
+        return c.json({ ok: false, error: { code: 'DELEG_SCOPE_DENIED', message: `Delegated scope does not cover ${declared}` }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 403);
+      }
+    }
+
     c.set('auth', {
       agent_id: agent.id,
       key_type: keyType,
-      owner_id: agent.owner_id
+      owner_id: agent.owner_id,
+      pop: pop.outcome,
+      pop_mode: pop.mode,
+      pop_reason: pop.outcome === 'would_deny' ? pop.code : undefined,
+      acting_for: pop.outcome === 'proven' ? pop.acting_for : undefined,
+      delegated_scope: pop.outcome === 'proven' ? pop.delegated_scope : undefined,
     });
 
     await next();
   }
 );
+
+/**
+ * Declare a route group delegable for a required scope. MUST be registered BEFORE authMiddleware on that group.
+ * Any route without this declaration refuses delegated principals (DELEG_ROUTE_NOT_DELEGABLE).
+ */
+export const delegable = (requiredScope: string) =>
+  createMiddleware<{ Bindings: Env; Variables: { auth: AuthContext; delegable_scope: string } }>(async (c, next) => {
+    c.set('delegable_scope', requiredScope);
+    await next();
+  });
 
 /**
  * Middleware that requires agent key type (not observer).

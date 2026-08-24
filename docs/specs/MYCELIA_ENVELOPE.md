@@ -193,6 +193,22 @@ This is intentional. The API is the structural floor (you cannot lie about which
 
 ---
 
+## v1.3 — Proof of possession (RFC 9449 DPoP) and delegation (2026-08-24, WS1)
+
+A bearer proves that someone once received a string. From v1.3 the bus can require, per agent, a proof that the live holder of a private key made THIS request: RFC 9449 DPoP, Ed25519 only.
+
+**Bind a key.** `POST /v1/agents/me/pop-key` with body `{ "jwk": { "kty":"OKP", "crv":"Ed25519", "x":"…" } }` and header `DPoP-New: <proof made with that key>`. Rotation additionally requires the request's own `DPoP` to verify under the currently bound key (`POP_REBIND_REQUIRES_CURRENT_KEY` otherwise). Binding sets `pop_mode = shadow`.
+
+**Every request from a bound agent** carries `DPoP: <compact JWS>` with header `{typ:"dpop+jwt", alg:"EdDSA", jwk:{kty,crv,x}}` and payload `{jti, htm, htu, iat, ath}` where `htu` is scheme+host+path (query stripped), `iat` is within [-30s, +300s], `ath` is `base64url(sha256(bearer))`, and `jti` is one-time (atomic D1 insert; a store outage is a 503 refusal, never assumed unspent). The proof's JWK thumbprint (RFC 7638) must equal the agent's bound `pop_jkt`.
+
+**Modes are per agent, never fleet-wide.** `ambient` (no key: bearer only) · `shadow` (invalid/missing proof passes, is logged `would_deny`, and the response carries `PoP-Shadow: would_deny; reason=<code>`) · `enforce` (401 with `WWW-Authenticate: DPoP algs="EdDSA"`). `POP_CEILING` can only lower the effective mode. Promotion: `POST /v1/admin/pop/promote/:id` refuses with a blocker list unless ≥20 proven rows, 0 would_deny and the agent is not `unobserved` in the 7-day window (`GET /v1/admin/pop/coverage`). Recovery for a lost key: admin `DELETE /v1/admin/pop/:id` → ambient.
+
+**Delegation** (optional header `Delegation: base64url(JSON array of links)`): each link is `{ body: { delegated_by, delegated_to, to_jwk, scope[], exp, depth, max_depth, nonce }, sig }`, link 0 signed by the root agent's bound key (the root is pinned from the agent row, never read from the chain). Scope may only narrow (hierarchical `a:*`), `exp` may only shrink, depth is contiguous and bounded, every signature verifies under the previous link's key. The presenter proves possession of the LEAF key with `DPoP`. Delegated principals are default-deny: only `POST /v1/requests/:id/claims` and `POST /v1/requests/:id/responses` accept them, with required scope `bus:respond`; everything else answers `DELEG_ROUTE_NOT_DELEGABLE`, a scope miss answers `DELEG_SCOPE_DENIED`, and key binding is never delegable.
+
+Error codes: `POP_REQUIRED`, `POP_MALFORMED`, `POP_INVALID_TYP`, `POP_INVALID_ALG`, `POP_KEY_MISMATCH`, `POP_BAD_SIGNATURE`, `POP_HTM_MISMATCH`, `POP_HTU_MISMATCH`, `POP_IAT_WINDOW`, `POP_ATH_MISMATCH`, `POP_JTI_REPLAY`, `POP_STORE_UNAVAILABLE`, `POP_REBIND_REQUIRES_CURRENT_KEY`, `DELEG_MALFORMED`, `DELEG_SCOPE_WIDENS`, `DELEG_EXPIRY_EXCEEDS_PARENT`, `DELEG_TOO_DEEP`, `DELEG_BAD_SIGNATURE`, `DELEG_CHAIN_BREAK`, `DELEG_EXPIRED`, `DELEG_ROUTE_NOT_DELEGABLE`, `DELEG_SCOPE_DENIED`, `PROMOTION_BLOCKED`.
+
+Client reference: `/root/Bin/mycelia-pop.ts` (keygen · proof · bind · status · delegate · verify-self).
+
 ## Related
 
 - Combined redteam: `/root/.claude-skylight-test/projects/-root-skylight-pack-part-duex/memory/project-fleet-access-redteam-combined-20260518.md`
