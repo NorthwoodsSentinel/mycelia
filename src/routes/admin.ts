@@ -37,8 +37,11 @@ const requireAdmin = createMiddleware<{ Bindings: Env }>(
       if (!proof || proof.length > 4096) { c.header('WWW-Authenticate', 'DPoP algs="EdDSA"'); return c.json(error('UNAUTHORIZED', 'Admin requests require a DPoP proof under the admin key (POP_REQUIRED)', 401).body, 401); }
       const r = await verifyDpop(proof, { htm: c.req.method, htu: c.req.url, ath: await sha256b64url(key), expectedJkt: c.env.ADMIN_POP_JKT, agentId: 'admin', jtiStore: d1JtiStore(c.env.DB) });
       if (!r.ok) { c.header('WWW-Authenticate', 'DPoP algs="EdDSA"'); return c.json({ ok: false, error: { code: r.code, message: `admin proof: ${r.message}` }, meta: { request_id: generateId(), timestamp: now() } }, r.code === 'POP_STORE_UNAVAILABLE' ? 503 : 401); }
+    } else if ((c.env.MODE ?? 'community') !== 'community') {
+      // fleet/company: a bearer-only admin surface is a misconfiguration, not a mode. Refuse, name it, never fall back.
+      return c.json(error('INTERNAL_ERROR', 'ADMIN_POP_JKT is not configured; admin access refused (fail-closed in fleet/company mode)', 503).body, 503);
     } else {
-      console.warn('admin: bearer-only (ADMIN_POP_JKT unset) — H5 exception active');
+      console.warn('admin: bearer-only (ADMIN_POP_JKT unset; community mode)');
     }
 
     await next();

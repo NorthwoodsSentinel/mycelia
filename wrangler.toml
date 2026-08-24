@@ -19,6 +19,8 @@ ADMIN_OWNER_ID = "rob-chuvala"
 # See src/middleware/fleet-gate.ts for the full feature matrix.
 # This node is Rob's own fleet bus → fleet mode.
 MODE = "fleet"
+# H5: public RFC 7638 thumbprint of the admin Ed25519 key (private half in 1P Fleet-Shared "Mycelia ADMIN_POP_KEY"). Admin routes require a DPoP proof under it.
+ADMIN_POP_JKT = "U42NCbxwl2Lox_1Hz5VfEdFgyyifRCJkF_Sdxuo7kGc"
 
 [[d1_databases]]
 binding = "DB"
