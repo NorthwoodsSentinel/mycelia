@@ -141,7 +141,7 @@ describe('codex audit fixes (2026-08-24)', () => {
     const r = await verifyDelegation([l0, l1, l2], { rootJkt: root.jkt, rootJwk: root.publicJwk, now: NOW });
     expect(r.ok).toBe(false); if (!r.ok) expect(r.code).toBe('DELEG_TOO_DEEP');
   });
-  it('H6: extra body properties, oversized scope arrays, and an expired intermediate are rejected', async () => {
+  it('H6: extra body properties and oversized scope arrays are rejected', async () => {
     const root = await generateDpopKeypair(); const a = await generateDpopKeypair();
     const body: any = { delegated_by: root.jkt, delegated_to: a.jkt, to_jwk: a.publicJwk, scope: ['bus:*'], exp: NOW + 3600, depth: 0, max_depth: 3, nonce: 'n0', extra: { deep: { nest: 1 } } };
     const l = await signLink(body, root.privateKey);

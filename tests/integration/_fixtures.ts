@@ -28,7 +28,8 @@ const MIGRATION_0002_TEST_STUB = `
 // schema must carry them. Migrations 0006/0007 (request_type CHECK widen +
 // FK-rebuild dance) are skipped here: app-layer validation is authoritative
 // and no integration test posts ops-bus request types.
-const MIGRATIONS = [migration0001, MIGRATION_0002_TEST_STUB, migration0003, migration0004, migration0008, migration0009];  // 0010 = trigger DDL; the test adapter splits on ';' and cannot load triggers (D1 applies it fine)
+const MIGRATION_0011_TEST_STUB = `ALTER TABLE pop_audit ADD COLUMN jkt TEXT;`;  // 0011's triggers cannot load in this adapter; the column can
+const MIGRATIONS = [migration0001, MIGRATION_0002_TEST_STUB, migration0003, migration0004, migration0008, migration0009, MIGRATION_0011_TEST_STUB];  // 0010 = trigger DDL; the test adapter splits on ';' and cannot load triggers (D1 applies it fine)
 
 export function createMockKV() {
   const store = new Map<string, string>();

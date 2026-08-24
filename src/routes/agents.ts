@@ -303,7 +303,12 @@ agents.post('/me/pop-key', requireAgentKey, async (c) => {
 
   // Possession of the NEW key, proven in-band.
   const bearer = (c.req.header('Authorization') ?? '').slice(7);
-  const r = await verifyDpop(c.req.header('DPoP-New'), {
+  const dpopNew = c.req.header('DPoP-New');
+  if (!dpopNew || dpopNew.length > 4096) {
+    c.header('WWW-Authenticate', 'DPoP algs="EdDSA"');
+    return c.json({ ok: false, error: { code: 'POP_MALFORMED', message: 'DPoP-New header missing or exceeds 4096 bytes' }, meta: { request_id: generateId(), timestamp: now() } }, 401);
+  }
+  const r = await verifyDpop(dpopNew, {
     htm: c.req.method, htu: c.req.url, ath: await sha256b64url(bearer), expectedJkt: newJkt, agentId: auth.agent_id, jtiStore: d1JtiStore(c.env.DB),
   });
   if (!r.ok) {

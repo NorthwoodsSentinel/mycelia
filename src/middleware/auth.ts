@@ -44,6 +44,32 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: { aut
     // A second pass would re-spend the one-time DPoP jti and report a false POP_JTI_REPLAY (found live 2026-08-24).
     if ((c as any).get('auth')) { await next(); return; }
     const authHeader = c.req.header('Authorization');
+    if (authHeader && authHeader.length > 512) {
+      return c.json({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Authorization header exceeds 512 bytes' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 401);
+    }
+    // C1 (structural): `Authorization: Delegated <root_agent_id>` — the delegate holds NO bearer. Identity comes from the chain
+    // (signed by the root's bound key, root pinned from the DB row) plus a DPoP proof of the leaf key. There is no legacy path:
+    // without a valid chain AND leaf proof the request is refused in every mode.
+    if (authHeader?.startsWith('Delegated ')) {
+      const rootId = authHeader.slice(10).trim();
+      if (!/^[A-Za-z0-9-]{8,64}$/.test(rootId)) return c.json({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Delegated root id malformed' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 401);
+      const root = await c.env.DB.prepare('SELECT id, owner_id, status, pop_jkt, pop_jwk, pop_mode FROM agents WHERE id = ?').bind(rootId).first<{ id: string; owner_id: string; status: string; pop_jkt: string | null; pop_jwk: string | null; pop_mode: string | null }>();
+      if (!root || root.status !== 'active') return c.json({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Delegated root agent unknown or inactive' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 401);
+      const d = await decidePop({ db: c.env.DB, agent: root, ceiling: c.env.POP_CEILING, bearer: null, method: c.req.method, url: c.req.url, dpopHeader: c.req.header('DPoP'), delegationHeader: c.req.header('Delegation') });
+      const htm = c.req.method, htu = c.req.url;
+      if (d.outcome !== 'proven' || !d.acting_for) {
+        const code = d.outcome === 'denied' || d.outcome === 'would_deny' ? d.code : 'DELEG_REQUIRED';
+        try { await writePopAudit(c.env.DB, { agent_id: root.id, outcome: 'denied', reason: code, htm, htu, arm: d.mode, acting_for: root.id }); } catch (e) { console.error('pop_audit write failed', String(e)); }
+        return c.json({ ok: false, error: { code, message: 'message' in d ? d.message : 'delegated request refused' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, code.startsWith('DELEG_') ? 403 : 401);
+      }
+      const declared = (c as any).get('delegable_scope') as string | undefined;
+      if (!declared) return c.json({ ok: false, error: { code: 'DELEG_ROUTE_NOT_DELEGABLE', message: 'This route does not accept delegated principals' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 403);
+      if (!scopeAuthorizes(d.delegated_scope ?? [], declared)) return c.json({ ok: false, error: { code: 'DELEG_SCOPE_DENIED', message: `Delegated scope does not cover ${declared}` }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 403);
+      try { await writePopAudit(c.env.DB, { agent_id: root.id, outcome: 'proven', htm, htu, arm: d.mode, acting_for: root.id, jkt: d.jkt }); } catch (e) { console.error('pop_audit write failed', String(e)); }
+      c.set('auth', { agent_id: root.id, key_type: 'agent', owner_id: root.owner_id, pop: 'proven', pop_mode: d.mode, acting_for: root.id, delegated_scope: d.delegated_scope });
+      await next();
+      return;
+    }
     if (!authHeader?.startsWith('Bearer ')) {
       return c.json({
         ok: false,
@@ -105,7 +131,7 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: { aut
     });
     const htm = c.req.method, htu = c.req.url;
     const audit = (outcome: string, reason?: string | null, acting_for?: string | null) =>
-      writePopAudit(c.env.DB, { agent_id: agent.id, outcome, reason, htm, htu, arm: pop.mode, acting_for }).catch((e) => console.error('pop_audit write failed', String(e)));
+      writePopAudit(c.env.DB, { agent_id: agent.id, outcome, reason, htm, htu, arm: pop.mode, acting_for, jkt: pop.outcome === 'proven' ? pop.jkt : null }).catch((e) => console.error('pop_audit write failed', String(e)));
     // waitUntil when the runtime has an ExecutionContext (Workers); await inline otherwise (tests / non-Worker hosts).
     const defer = (p: Promise<void>) => { try { c.executionCtx.waitUntil(p); return Promise.resolve(); } catch { return p; } };
 

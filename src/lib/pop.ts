@@ -31,7 +31,7 @@ export async function decidePop(args: {
   db: D1Database;
   agent: AgentPopRow;
   ceiling: string | undefined;
-  bearer: string;
+  bearer: string | null;        // null = `Authorization: Delegated <agent_id>` scheme: no bearer exists, the chain + leaf proof authenticate
   method: string;
   url: string;
   dpopHeader: string | undefined;
@@ -41,9 +41,15 @@ export async function decidePop(args: {
   const mode = effectiveMode(args.agent.pop_mode, args.ceiling);
   const hard = (code: string, message: string): PopDecision => ({ outcome: 'denied', mode, code, message });
   // H2: PoP state is all-or-nothing. A half-written row or an unknown mode is a refusal, never a downgrade to ambient.
-  const hasJkt = !!args.agent.pop_jkt, hasJwk = !!args.agent.pop_jwk;
+  const present = (v: string | null | undefined) => v != null && v !== '';       // H2: empty string is CORRUPT, not absent
+  const hasJkt = present(args.agent.pop_jkt), hasJwk = present(args.agent.pop_jwk);
+  if (args.agent.pop_jkt === '' || args.agent.pop_jwk === '') return hard('POP_STATE_CORRUPT', 'pop binding has an empty key field; admin recovery required');
   if (hasJkt !== hasJwk) return hard('POP_STATE_CORRUPT', 'pop binding is partial; admin recovery required');
   if (args.agent.pop_mode != null && !(args.agent.pop_mode in RANK)) return hard('POP_STATE_CORRUPT', 'pop_mode is not a known value');
+  if (!hasJkt && args.agent.pop_mode && args.agent.pop_mode !== 'ambient') return hard('POP_STATE_CORRUPT', 'unbound agent carries a non-ambient pop_mode; admin recovery required');
+  // C1 (structural): a bearer request may never carry a Delegation header, and a Delegated request never carries a bearer.
+  if (args.bearer != null && args.delegationHeader) return hard('DELEG_WITH_BEARER', 'delegation is presented with Authorization: Delegated <root_agent_id>, never with a bearer');
+  if (args.bearer == null && !args.delegationHeader) return hard('DELEG_REQUIRED', 'Authorization: Delegated requires a Delegation header');
   if (!hasJkt) {
     // C1: a Delegation header on an unbound agent can never be valid — refuse rather than fall through as the root.
     if (args.delegationHeader) return hard('DELEG_ROOT_UNBOUND', 'Delegation presented but the root agent has no bound key');
@@ -77,7 +83,8 @@ export async function decidePop(args: {
   }
 
   if (!args.dpopHeader) return acting_for ? hard('POP_REQUIRED', 'delegated requests must carry a DPoP proof of the leaf key') : deny('POP_REQUIRED', 'DPoP header missing');
-  const ath = await sha256b64url(args.bearer);
+  // ath binds the proof to the bearer. A Delegated request has no bearer: the proof is bound to the chain's leaf key instead.
+  const ath = args.bearer != null ? await sha256b64url(args.bearer) : null;
   const r = await verifyDpop(args.dpopHeader, {
     htm: args.method, htu: args.url, ath, expectedJkt, now: args.now, agentId: args.agent.id, jtiStore: d1JtiStore(args.db),
   });
@@ -91,9 +98,10 @@ export async function decidePop(args: {
 }
 
 export async function writePopAudit(db: D1Database, row: {
-  agent_id: string; outcome: string; reason?: string | null; htm: string; htu: string; arm: string; acting_for?: string | null;
+  agent_id: string; outcome: string; reason?: string | null; htm: string; htu: string; arm: string; acting_for?: string | null; jkt?: string | null;
 }): Promise<void> {
-  await db.prepare('INSERT INTO pop_audit (id, agent_id, outcome, reason, htm, htu, arm, acting_for, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-    .bind(crypto.randomUUID(), row.agent_id, row.outcome, row.reason ?? null, row.htm, row.htu.split('?')[0].split('#')[0].slice(0, 512), row.arm, row.acting_for ?? null, new Date().toISOString())
+  // H3: every row names the key it was proven under, so promotion can count only evidence for the CURRENT key.
+  await db.prepare('INSERT INTO pop_audit (id, agent_id, outcome, reason, htm, htu, arm, acting_for, jkt, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .bind(crypto.randomUUID(), row.agent_id, row.outcome, row.reason ?? null, row.htm, row.htu.split('?')[0].split('#')[0].slice(0, 512), row.arm, row.acting_for ?? null, row.jkt ?? null, new Date().toISOString())
     .run();
 }
