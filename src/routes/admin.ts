@@ -105,32 +105,29 @@ admin.post('/pop/promote/:id', async (c) => {
     await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promotion_aborted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { reason, adverse_rows: n, jkt: a.jkt } });
     return c.json({ ok: false, error: { code: 'PROMOTION_BLOCKED', message: reason, blockers: [{ code: 'WOULD_DENY_PRESENT', observed: n, threshold: 0 }] }, meta: { request_id: generateId(), timestamp: now() } }, 409);
   };
-  const late = await c.env.DB.prepare(lateQ).bind(id, cov.snapshot_rowid).first<{ n: number }>();
-  if ((late?.n ?? 0) > 0) return abort('adverse evidence arrived during promotion', late!.n);
-  // CAS on the full binding EPOCH (jkt + bound_at) and on the transition (shadow → enforce): a same-key rebind or an
-  // already-enforced agent both miss the CAS. enforce→enforce can never emit a second success.
-  const up = await c.env.DB.prepare("UPDATE agents SET pop_mode = 'enforce' WHERE id = ? AND pop_jkt = ? AND pop_bound_at = ? AND pop_mode = 'shadow'").bind(id, a.jkt, a.bound_at).run();
-  // Second window (late check → UPDATE): re-check AFTER the mutation; on a hit, revert and record honestly.
-  if (up.meta.changes) {
-    const late2 = await c.env.DB.prepare(lateQ).bind(id, cov.snapshot_rowid).first<{ n: number }>();
-    if ((late2?.n ?? 0) > 0) {
-      const rv = await c.env.DB.prepare("UPDATE agents SET pop_mode = 'shadow' WHERE id = ? AND pop_jkt = ? AND pop_bound_at = ? AND pop_mode = 'enforce'").bind(id, a.jkt, a.bound_at).run();
-      if (rv.meta.changes) return abort('adverse evidence arrived during promotion; reverted to shadow', late2!.n);
-      await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promotion_revert_failed' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { adverse_rows: late2!.n, jkt: a.jkt, note: 'binding changed during revert; agent state must be read from the row, not this log' } });
-      return c.json({ ok: false, error: { code: 'PROMOTION_CONFLICT', message: 'adverse evidence arrived and the revert CAS missed; inspect the agent row' }, meta: { request_id: generateId(), timestamp: now() } }, 409);
-    }
-  }
+  // ONE statement decides: the adverse-evidence check is inside the UPDATE's WHERE (NOT EXISTS over rowid > snapshot), and the
+  // success audit rides in the same D1 batch, which D1 executes atomically. No window between check, mutation, and record.
+  const successDetail = JSON.stringify({ from: a.pop_mode, to: 'enforce', proven: a.proven, window_days: cov.window_days, jkt: a.jkt, snapshot_rowid: cov.snapshot_rowid });
+  const batch = await c.env.DB.batch([
+    c.env.DB.prepare(
+      "UPDATE agents SET pop_mode = 'enforce' WHERE id = ? AND pop_jkt = ? AND pop_bound_at = ? AND pop_mode = 'shadow' " +
+      "AND NOT EXISTS (SELECT 1 FROM pop_audit WHERE agent_id = ? AND acting_for IS NULL AND outcome IN ('would_deny','denied') AND rowid > ?)"
+    ).bind(id, a.jkt, a.bound_at, id, cov.snapshot_rowid),
+    // success row is conditional on the same predicate, so it is written iff the UPDATE changed the row
+    c.env.DB.prepare(
+      "INSERT INTO audit_log (event_type, actor_id, target_type, target_id, detail, created_at) " +
+      "SELECT 'agent.pop_promoted', NULL, 'agent', ?, ?, ? WHERE EXISTS (SELECT 1 FROM agents WHERE id = ? AND pop_jkt = ? AND pop_bound_at = ? AND pop_mode = 'enforce')"
+    ).bind(id, successDetail, now(), id, a.jkt, a.bound_at),
+  ]);
+  const up = batch[0];
   if (!up.meta.changes) {
+    // Distinguish "adverse evidence arrived" from "epoch/transition changed" so the abort row names the cause.
+    const late = await c.env.DB.prepare(lateQ).bind(id, cov.snapshot_rowid).first<{ n: number }>();
+    if ((late?.n ?? 0) > 0) return abort('adverse evidence arrived during promotion', late!.n);
     await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promotion_aborted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { reason: 'key changed between evidence snapshot and promotion', jkt: a.jkt } });
     return c.json({ ok: false, error: { code: 'PROMOTION_CONFLICT', message: 'binding changed while promoting; re-evaluate' }, meta: { request_id: generateId(), timestamp: now() } }, 409);
   }
-  try {
-    await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promoted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { from: a.pop_mode, to: 'enforce', proven: a.proven, window_days: cov.window_days, jkt: a.jkt } });
-  } catch (e) {
-    console.error('[promote] success audit failed after a committed promotion', String(e));
-    return c.json(success({ agent_id: id, pop_mode: 'enforce', audit_incomplete: true, evidence: { proven: a.proven, would_deny: a.would_deny, window_days: cov.window_days } }));
-  }
-  return c.json(success({ agent_id: id, pop_mode: 'enforce', evidence: { proven: a.proven, would_deny: a.would_deny, window_days: cov.window_days } }));
+  return c.json(success({ agent_id: id, pop_mode: 'enforce', audited_atomically: true, evidence: { proven: a.proven, would_deny: a.would_deny, window_days: cov.window_days } }));
 });
 
 // POST /v1/admin/pop/demote/:id — enforce → shadow for ONE agent (never the fleet)

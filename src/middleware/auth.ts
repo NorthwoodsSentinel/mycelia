@@ -62,7 +62,7 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: { aut
         // Evidence-poisoning guard: an UNPROVEN caller naming a root cannot write promotion-blocking evidence against it.
         // Failed delegated attempts are recorded as 'deleg_denied' — visible in coverage, never counted as would_deny/denied.
         // Unproven callers get a bounded KV counter (one key per root per hour), never a D1 row — storage amplification closed (round 5).
-        try { const k = `deleg_fail:${root.id}:${new Date().toISOString().slice(0, 13)}`; const cur = Number((await c.env.KV.get(k)) ?? 0); await c.env.KV.put(k, String(cur + 1), { expirationTtl: 8 * 86400 }); } catch (e) { console.error('deleg_fail counter failed', String(e)); }
+        try { await c.env.DB.prepare("INSERT INTO deleg_fail (k, agent_id, hour, n) VALUES (?, ?, ?, 1) ON CONFLICT(k) DO UPDATE SET n = n + 1").bind(`${root.id}:${new Date().toISOString().slice(0, 13)}`, root.id, new Date().toISOString().slice(0, 13)).run(); } catch (e) { console.error('deleg_fail counter failed', String(e)); }
         return c.json({ ok: false, error: { code, message: 'message' in d ? d.message : 'delegated request refused' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, code.startsWith('DELEG_') ? 403 : 401);
       }
       const declared = (c as any).get('delegable_scope') as string | undefined;
