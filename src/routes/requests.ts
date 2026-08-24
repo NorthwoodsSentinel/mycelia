@@ -58,6 +58,14 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
   if (!input.body || input.body.length < 20 || input.body.length > 10000) {
     return c.json(error('VALIDATION_ERROR', 'body must be 20-10,000 characters', 400).body, 400);
   }
+  // 2026-08-24: D1 bind() throws on non-scalar values (arrays pass a .length check; objects have no
+  // length at all) and the throw surfaced as a bare 500 with no field name. Bind at the boundary:
+  // every scalar column must be a string here, or the caller gets a 400 that names the field.
+  for (const [k, v] of [['title', input.title], ['body', input.body], ['context', input.context], ['request_type', input.request_type], ['priority', input.priority]] as const) {
+    if (v !== undefined && v !== null && typeof v !== 'string') {
+      return c.json(error('VALIDATION_ERROR', `${k} must be a string (got ${Array.isArray(v) ? 'array' : typeof v})`, 400).body, 400);
+    }
+  }
 
   // Validate request_type — v1.2 (2026-07-01) adds six ops-bus types per T-059.
   const validTypes: RequestType[] = [
@@ -229,7 +237,14 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
       'UPDATE agents SET request_count = request_count + 1 WHERE id = ?'
     ).bind(auth.agent_id)
   );
-  await c.env.DB.batch(batchStatements);
+  try {
+    await c.env.DB.batch(batchStatements);
+  } catch (e: any) {
+    const shape = Object.fromEntries(Object.entries(input).map(([k, v]) => [k, Array.isArray(v) ? 'array' : typeof v]));
+    console.error('[requests] D1 batch failed', JSON.stringify({ requester: auth.agent_id, message: String(e?.message ?? e), shape }));
+    if (/D1_TYPE_ERROR|not supported/i.test(String(e?.message ?? e))) return c.json(error('VALIDATION_ERROR', `unbindable field value: ${String(e?.message ?? e)}`, 400).body, 400);
+    throw e;
+  }
 
   try {
     await writeAuditLog(c.env.DB, c.env.KV, {
