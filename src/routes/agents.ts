@@ -8,6 +8,7 @@ import { kvInvalidateCapabilityCache } from '../lib/kv';
 import { success, error, generateId, now } from '../lib/utils';
 import { revoke, unrevoke, checkRevoked } from '../lib/revocation';
 import { verifyDpop, d1JtiStore, jwkThumbprint, sha256b64url, isOkpJwk } from '../lib/dpop';
+import { writePopAudit } from '../lib/pop';
 
 const agents = new Hono<{ Bindings: Env; Variables: { auth: AuthContext } }>();
 
@@ -334,7 +335,11 @@ agents.post('/me/pop-key', requireAgentKey, async (c) => {
   }
   try {
     await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_key_bound' as any, actor_id: auth.agent_id, target_type: 'agent', target_id: auth.agent_id, detail: { jkt: newJkt, rotated: !!row?.pop_jkt, pop_mode: nextMode } });
-  } catch (e) { console.error('[pop-key] audit failed', String(e)); }
+  } catch (e) {
+    console.error('[pop-key] completion audit failed after a committed binding', String(e));
+    try { await writePopAudit(c.env.DB, { agent_id: auth.agent_id, outcome: 'audit_gap', reason: 'bind_completion_audit_failed', htm: c.req.method, htu: c.req.url, arm: nextMode, jkt: newJkt }); } catch {}
+    return c.json(success({ agent_id: auth.agent_id, pop_jkt: newJkt, pop_bound_at: boundAt, pop_mode: nextMode, rotated: !!row?.pop_jkt, audit_incomplete: true }), row?.pop_jkt ? 200 : 201);
+  }
   return c.json(success({ agent_id: auth.agent_id, pop_jkt: newJkt, pop_bound_at: boundAt, pop_mode: nextMode, rotated: !!row?.pop_jkt }), row?.pop_jkt ? 200 : 201);
 });
 

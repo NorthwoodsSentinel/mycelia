@@ -41,10 +41,11 @@ const PROMOTE = { min_proven: 20, max_would_deny: 0 } as const;
 
 async function popCoverage(db: D1Database, days = POP_WINDOW_DAYS) {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
+  const since_snapshot = new Date().toISOString();   // taken BEFORE the evidence query so nothing can slip between them
   const agents = (await db.prepare('SELECT id, name, pop_jkt, pop_mode, pop_bound_at FROM agents WHERE status = ?').bind('active').all<{ id: string; name: string; pop_jkt: string | null; pop_mode: string; pop_bound_at: string | null }>()).results;
   // H3: evidence counts only rows written since the CURRENT binding, and only direct root proofs (acting_for IS NULL) count as proven.
   // H3: proven rows count only when written under the agent's CURRENT key (p.jkt = a.pop_jkt) and by the root itself (acting_for IS NULL).
-  const rows = (await db.prepare('SELECT p.agent_id, p.outcome, p.reason, COUNT(*) AS n, MAX(p.created_at) AS last FROM pop_audit p JOIN agents a ON a.id = p.agent_id WHERE p.created_at >= ? AND (a.pop_bound_at IS NULL OR p.created_at >= a.pop_bound_at) AND (p.outcome != ? OR (p.acting_for IS NULL AND p.jkt = a.pop_jkt)) GROUP BY p.agent_id, p.outcome, p.reason').bind(since, 'proven').all<{ agent_id: string; outcome: string; reason: string | null; n: number; last: string }>()).results;
+  const rows = (await db.prepare('SELECT p.agent_id, p.outcome, p.reason, COUNT(*) AS n, MAX(p.created_at) AS last FROM pop_audit p JOIN agents a ON a.id = p.agent_id WHERE p.created_at >= ? AND (a.pop_bound_at IS NULL OR p.created_at >= a.pop_bound_at) AND p.acting_for IS NULL AND (p.outcome != ? OR p.jkt = a.pop_jkt) GROUP BY p.agent_id, p.outcome, p.reason').bind(since, 'proven').all<{ agent_id: string; outcome: string; reason: string | null; n: number; last: string }>()).results;
   const by: Record<string, any> = {};
   for (const a of agents) by[a.id] = { agent_id: a.id, name: a.name, pop_mode: a.pop_mode, bound: !!a.pop_jkt, jkt: a.pop_jkt, bound_at: a.pop_bound_at, proven: 0, ambient: 0, would_deny: 0, denied: 0, last_reason: null as string | null, last_seen: null as string | null, population: 'ambient' };
   for (const r of rows) {
@@ -60,7 +61,7 @@ async function popCoverage(db: D1Database, days = POP_WINDOW_DAYS) {
     totals.proven += b.proven; totals.ambient += b.ambient; totals.would_deny += b.would_deny; totals.denied += b.denied;
     if (b.population === 'unobserved') totals.unobserved++;
   }
-  return { window_days: days, since, since_snapshot: new Date().toISOString(), ...totals, by_agent: Object.values(by).sort((x: any, y: any) => (y.would_deny - x.would_deny) || (y.proven - x.proven)) };
+  return { window_days: days, since, since_snapshot, ...totals, by_agent: Object.values(by).sort((x: any, y: any) => (y.would_deny - x.would_deny) || (y.proven - x.proven)) };
 }
 
 function promotionBlockers(a: any): { code: string; observed: number | string; threshold: number | string }[] {
@@ -88,17 +89,31 @@ admin.post('/pop/promote/:id', async (c) => {
   if (!a) return c.json(error('NOT_FOUND', 'Agent not found or inactive', 404).body, 404);
   const blockers = promotionBlockers(a);
   if (blockers.length) return c.json({ ok: false, error: { code: 'PROMOTION_BLOCKED', message: 'Blockers present; none may be waived', blockers }, meta: { request_id: generateId(), timestamp: now() } }, 409);
-  // Audit before mutation; mutation is a CAS on the SAME key the evidence was counted under (H3 rotation race);
-  // a CAS miss writes a compensating audit row so the log never claims a promotion that did not happen.
-  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promoted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { from: a.pop_mode, to: 'enforce', proven: a.proven, window_days: cov.window_days, jkt: a.jkt } });
+  // Intent is audited first (attempt), the success row is written only after the post-mutation check passes.
+  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promotion_attempt' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { from: a.pop_mode, to: 'enforce', proven: a.proven, window_days: cov.window_days, jkt: a.jkt } });
   // Re-check adverse evidence written since the snapshot (would_deny/denied under the current key) — closes the snapshot→promote window.
-  const late = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM pop_audit WHERE agent_id = ? AND outcome IN ('would_deny','denied') AND created_at >= ?").bind(id, cov.since_snapshot ?? cov.since).first<{ n: number }>();
-  if ((late?.n ?? 0) > 0) return c.json({ ok: false, error: { code: 'PROMOTION_BLOCKED', message: 'adverse evidence arrived during promotion', blockers: [{ code: 'WOULD_DENY_PRESENT', observed: late!.n, threshold: 0 }] }, meta: { request_id: generateId(), timestamp: now() } }, 409);
+  // Adverse evidence = bearer-path rows only (acting_for IS NULL): an unproven caller cannot poison promotion via the Delegated scheme.
+  const lateQ = "SELECT COUNT(*) AS n FROM pop_audit WHERE agent_id = ? AND acting_for IS NULL AND outcome IN ('would_deny','denied') AND created_at >= ?";
+  const abort = async (reason: string, n: number) => {
+    await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promotion_aborted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { reason, adverse_rows: n, jkt: a.jkt } });
+    return c.json({ ok: false, error: { code: 'PROMOTION_BLOCKED', message: reason, blockers: [{ code: 'WOULD_DENY_PRESENT', observed: n, threshold: 0 }] }, meta: { request_id: generateId(), timestamp: now() } }, 409);
+  };
+  const late = await c.env.DB.prepare(lateQ).bind(id, cov.since_snapshot).first<{ n: number }>();
+  if ((late?.n ?? 0) > 0) return abort('adverse evidence arrived during promotion', late!.n);
   const up = await c.env.DB.prepare('UPDATE agents SET pop_mode = ? WHERE id = ? AND pop_jkt = ?').bind('enforce', id, a.jkt).run();
+  // Second window (late check → UPDATE): re-check AFTER the mutation; on a hit, revert and record. A promotion is only final once this passes.
+  if (up.meta.changes) {
+    const late2 = await c.env.DB.prepare(lateQ).bind(id, cov.since_snapshot).first<{ n: number }>();
+    if ((late2?.n ?? 0) > 0) {
+      await c.env.DB.prepare('UPDATE agents SET pop_mode = ? WHERE id = ? AND pop_jkt = ?').bind('shadow', id, a.jkt).run();
+      return abort('adverse evidence arrived during promotion; reverted to shadow', late2!.n);
+    }
+  }
   if (!up.meta.changes) {
     await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promotion_aborted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { reason: 'key changed between evidence snapshot and promotion', jkt: a.jkt } });
     return c.json({ ok: false, error: { code: 'PROMOTION_CONFLICT', message: 'binding changed while promoting; re-evaluate' }, meta: { request_id: generateId(), timestamp: now() } }, 409);
   }
+  await writeAuditLog(c.env.DB, c.env.KV, { event_type: 'agent.pop_promoted' as any, actor_id: null, target_type: 'agent', target_id: id, detail: { from: a.pop_mode, to: 'enforce', proven: a.proven, window_days: cov.window_days, jkt: a.jkt } });
   return c.json(success({ agent_id: id, pop_mode: 'enforce', evidence: { proven: a.proven, would_deny: a.would_deny, window_days: cov.window_days } }));
 });
 

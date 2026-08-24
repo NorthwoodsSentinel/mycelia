@@ -59,12 +59,14 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: { aut
       const htm = c.req.method, htu = c.req.url;
       if (d.outcome !== 'proven' || !d.acting_for) {
         const code = d.outcome === 'denied' || d.outcome === 'would_deny' ? d.code : 'DELEG_REQUIRED';
-        try { await writePopAudit(c.env.DB, { agent_id: root.id, outcome: 'denied', reason: code, htm, htu, arm: d.mode, acting_for: root.id }); } catch (e) { console.error('pop_audit write failed', String(e)); }
+        // Evidence-poisoning guard: an UNPROVEN caller naming a root cannot write promotion-blocking evidence against it.
+        // Failed delegated attempts are recorded as 'deleg_denied' — visible in coverage, never counted as would_deny/denied.
+        try { await writePopAudit(c.env.DB, { agent_id: root.id, outcome: 'deleg_denied', reason: code, htm, htu, arm: d.mode, acting_for: root.id }); } catch (e) { console.error('pop_audit write failed', String(e)); }
         return c.json({ ok: false, error: { code, message: 'message' in d ? d.message : 'delegated request refused' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, code.startsWith('DELEG_') ? 403 : 401);
       }
       const declared = (c as any).get('delegable_scope') as string | undefined;
       const scopeOk = !!declared && scopeAuthorizes(d.delegated_scope ?? [], declared);
-      if (!declared || !scopeOk) { try { await writePopAudit(c.env.DB, { agent_id: root.id, outcome: 'denied', reason: !declared ? 'DELEG_ROUTE_NOT_DELEGABLE' : 'DELEG_SCOPE_DENIED', htm, htu, arm: d.mode, acting_for: root.id, jkt: d.jkt }); } catch (e) { console.error('pop_audit write failed', String(e)); } }
+      if (!declared || !scopeOk) { try { await writePopAudit(c.env.DB, { agent_id: root.id, outcome: 'deleg_denied', reason: !declared ? 'DELEG_ROUTE_NOT_DELEGABLE' : 'DELEG_SCOPE_DENIED', htm, htu, arm: d.mode, acting_for: root.id, jkt: d.jkt }); } catch (e) { console.error('pop_audit write failed', String(e)); } }
       if (!declared) return c.json({ ok: false, error: { code: 'DELEG_ROUTE_NOT_DELEGABLE', message: 'This route does not accept delegated principals' }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 403);
       if (!scopeAuthorizes(d.delegated_scope ?? [], declared)) return c.json({ ok: false, error: { code: 'DELEG_SCOPE_DENIED', message: `Delegated scope does not cover ${declared}` }, meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() } }, 403);
       try { await writePopAudit(c.env.DB, { agent_id: root.id, outcome: 'proven', htm, htu, arm: d.mode, acting_for: root.id, jkt: d.jkt }); } catch (e) { console.error('pop_audit write failed', String(e)); }
