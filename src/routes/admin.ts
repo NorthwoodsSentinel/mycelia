@@ -46,14 +46,17 @@ async function popCoverage(db: D1Database, days = POP_WINDOW_DAYS) {
   // H3: evidence counts only rows written since the CURRENT binding, and only direct root proofs (acting_for IS NULL) count as proven.
   // H3: proven rows count only when written under the agent's CURRENT key (p.jkt = a.pop_jkt) and by the root itself (acting_for IS NULL).
   const rows = (await db.prepare('SELECT p.agent_id, p.outcome, p.reason, COUNT(*) AS n, MAX(p.created_at) AS last FROM pop_audit p JOIN agents a ON a.id = p.agent_id WHERE p.created_at >= ? AND (a.pop_bound_at IS NULL OR p.created_at >= a.pop_bound_at) AND p.acting_for IS NULL AND (p.outcome != ? OR p.jkt = a.pop_jkt) GROUP BY p.agent_id, p.outcome, p.reason').bind(since, 'proven').all<{ agent_id: string; outcome: string; reason: string | null; n: number; last: string }>()).results;
+  // Delegated-path failures are shown separately and NEVER feed blockers (an unproven caller cannot poison promotion).
+  const dd = (await db.prepare("SELECT agent_id, COUNT(*) AS n FROM pop_audit WHERE created_at >= ? AND outcome = 'deleg_denied' GROUP BY agent_id").bind(since).all<{ agent_id: string; n: number }>()).results;
   const by: Record<string, any> = {};
-  for (const a of agents) by[a.id] = { agent_id: a.id, name: a.name, pop_mode: a.pop_mode, bound: !!a.pop_jkt, jkt: a.pop_jkt, bound_at: a.pop_bound_at, proven: 0, ambient: 0, would_deny: 0, denied: 0, last_reason: null as string | null, last_seen: null as string | null, population: 'ambient' };
+  for (const a of agents) by[a.id] = { agent_id: a.id, name: a.name, pop_mode: a.pop_mode, bound: !!a.pop_jkt, jkt: a.pop_jkt, bound_at: a.pop_bound_at, proven: 0, ambient: 0, would_deny: 0, denied: 0, deleg_denied: 0, last_reason: null as string | null, last_seen: null as string | null, population: 'ambient' };
   for (const r of rows) {
     const b = by[r.agent_id] ?? (by[r.agent_id] = { agent_id: r.agent_id, name: null, pop_mode: null, bound: false, proven: 0, ambient: 0, would_deny: 0, denied: 0, last_reason: null, last_seen: null, population: 'unknown' });
     b[r.outcome] = (b[r.outcome] ?? 0) + Number(r.n);
     if (r.reason && (r.outcome === 'would_deny' || r.outcome === 'denied')) b.last_reason = r.reason;
     if (!b.last_seen || r.last > b.last_seen) b.last_seen = r.last;
   }
+  for (const d of dd) if (by[d.agent_id]) by[d.agent_id].deleg_denied = Number(d.n);
   // Population: the number that a global metric hides. `unobserved` = bound but no rows in the window.
   const totals = { proven: 0, ambient: 0, would_deny: 0, denied: 0, unobserved: 0, bound_agents: 0, agents: agents.length };
   for (const b of Object.values(by)) {
