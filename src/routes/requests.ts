@@ -276,20 +276,21 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
 
 // ─── GET /v1/requests — Browse open requests ─────────────────────────────────
 
-requests.get('/', rateLimit('read'), async (c) => {
-  const query = c.req.query();
+// Extracted from the GET /v1/requests handler so the filter can be unit-tested
+// directly (CeeCee's tests/request-list-filter.test.ts, branch fix/browse-target-filter-v2,
+// 2026-08-13). Integration tests exercise the handler; these grade the SQL it builds.
+// Param ORDER is load-bearing: D1 binds positionally, so drift returns wrong rows
+// while still returning 200 — the same silent-wrong class as the original bug.
+export function buildRequestListFilter(query: Record<string, string | undefined>): {
+  where: string;
+  params: unknown[];
+} {
   const status = query.status || 'open';
-  const tagsParam = query.tags;
-  const tags = tagsParam ? tagsParam.split(',').filter(Boolean) : undefined;
   const type = query.type;
   const priority = query.priority;
   const targetAgentId = query.target_agent_id;
-  const sort = query.sort;
-  const pagination = parsePagination(query);
-
-  // Override sort from query param (parsePagination already captures it, but we want to validate)
-  const validSorts = ['created_at', 'priority'];
-  const sortField = sort && validSorts.includes(sort) ? sort : 'created_at';
+  const tagsParam = query.tags;
+  const tags = tagsParam ? tagsParam.split(',').filter(Boolean) : undefined;
 
   let where = 'WHERE r.status = ?';
   const params: unknown[] = [status];
@@ -304,17 +305,11 @@ requests.get('/', rateLimit('read'), async (c) => {
     params.push(priority);
   }
 
-  // Directed-inbox filter — "what is addressed to me". The MCP tool advertised this
-  // ("Use this to find requests addressed to you") but it was never read here, so every
-  // inbox query silently returned an unrelated set: a bogus agent id returned the same
-  // rows as a valid one. Found 2026-09-05.
-  // Three explicit modes (CeeCee's `none` sentinel, adopted over an
-  // include_undirected boolean — a boolean can express directed+broadcast but
-  // never broadcast-only, and it would re-blur the distinction just un-blurred):
-  //   target_agent_id=<id>    -> addressed to that agent (strict; SQL `= ?` never
-  //                              matches NULL, so undirected rows are excluded)
-  //   target_agent_id=none    -> broadcast/undirected only (IS NULL)
-  //   omitted                 -> everything
+  // Three explicit modes (the `none` sentinel, chosen over an include_undirected
+  // boolean — a boolean can express directed+broadcast but never broadcast-only):
+  //   target_agent_id=<id>  -> addressed to that agent (strict; `= ?` never matches NULL)
+  //   target_agent_id=none  -> broadcast/undirected only (IS NULL)
+  //   omitted / empty       -> no target constraint
   if (targetAgentId === 'none') {
     where += ' AND r.target_agent_id IS NULL';
   } else if (targetAgentId) {
@@ -330,6 +325,20 @@ requests.get('/', rateLimit('read'), async (c) => {
     )`;
     params.push(...tags);
   }
+
+  return { where, params };
+}
+
+requests.get('/', rateLimit('read'), async (c) => {
+  const query = c.req.query();
+  const sort = query.sort;
+  const pagination = parsePagination(query);
+
+  // Override sort from query param (parsePagination already captures it, but we want to validate)
+  const validSorts = ['created_at', 'priority'];
+  const sortField = sort && validSorts.includes(sort) ? sort : 'created_at';
+
+  const { where, params } = buildRequestListFilter(query);
 
   const orderBy = sortField === 'priority'
     ? `CASE r.priority WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 ELSE 4 END ASC, r.created_at DESC`
