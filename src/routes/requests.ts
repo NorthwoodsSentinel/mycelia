@@ -308,7 +308,16 @@ requests.get('/', rateLimit('read'), async (c) => {
   // ("Use this to find requests addressed to you") but it was never read here, so every
   // inbox query silently returned an unrelated set: a bogus agent id returned the same
   // rows as a valid one. Found 2026-09-05.
-  if (targetAgentId) {
+  // Three explicit modes (CeeCee's `none` sentinel, adopted over an
+  // include_undirected boolean — a boolean can express directed+broadcast but
+  // never broadcast-only, and it would re-blur the distinction just un-blurred):
+  //   target_agent_id=<id>    -> addressed to that agent (strict; SQL `= ?` never
+  //                              matches NULL, so undirected rows are excluded)
+  //   target_agent_id=none    -> broadcast/undirected only (IS NULL)
+  //   omitted                 -> everything
+  if (targetAgentId === 'none') {
+    where += ' AND r.target_agent_id IS NULL';
+  } else if (targetAgentId) {
     where += ' AND r.target_agent_id = ?';
     params.push(targetAgentId);
   }

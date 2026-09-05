@@ -120,3 +120,40 @@ describe('GET /v1/requests — directed-inbox filter (target_agent_id)', () => {
     expect(ids).toContain(undirectedId);
   });
 });
+
+describe('GET /v1/requests — the `none` sentinel (broadcast-only)', () => {
+  let env: TestEnv;
+  let agents: SeededAgents;
+  let fullEnv: any;
+  let directedId: string;
+  let undirectedId: string;
+
+  beforeEach(async () => {
+    env = createTestEnv();
+    applyMigrationsSync(env);
+    agents = await seedAgents(env);
+    fullEnv = { ...env, ...ENV_EXTRAS };
+    directedId = await insertRequest(env, agents.requesterId, agents.responderId, 'directed at responder');
+    undirectedId = await insertRequest(env, agents.requesterId, null, 'undirected broadcast');
+  });
+
+  it('selects broadcast-only with the `none` sentinel', async () => {
+    const res = await app.fetch(authGet('/v1/requests?target_agent_id=none', agents.responderKey), fullEnv);
+    const json = await res.json() as any;
+    const ids = json.data.requests.map((r: any) => r.id);
+    expect(ids).toContain(undirectedId);
+    expect(ids).not.toContain(directedId);
+    for (const r of json.data.requests) expect(r.target_agent_id).toBeNull();
+  });
+
+  it('distinguishes broadcast-only from directed', async () => {
+    const bc = await app.fetch(authGet('/v1/requests?target_agent_id=none', agents.responderKey), fullEnv);
+    const dir = await app.fetch(authGet(`/v1/requests?target_agent_id=${agents.responderId}`, agents.responderKey), fullEnv);
+    const bcIds = ((await bc.json()) as any).data.requests.map((r: any) => r.id);
+    const dirIds = ((await dir.json()) as any).data.requests.map((r: any) => r.id);
+    expect(bcIds).not.toEqual(dirIds);
+    expect(bcIds).toContain(undirectedId);
+    expect(dirIds).toContain(directedId);
+    expect(bcIds.some((i: string) => dirIds.includes(i))).toBe(false);
+  });
+});
