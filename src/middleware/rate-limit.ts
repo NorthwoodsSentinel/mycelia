@@ -56,7 +56,16 @@ export function rateLimit(category: string) {
 
         return c.json({
           ok: false,
-          error: { code: 'RATE_LIMITED', message: `Rate limit exceeded. Try again later.` },
+          // "Try again later" told the caller nothing actionable: the reset time and the
+          // limit were computed here and sent only as headers, which the MCP client drops.
+          // Callers retried blindly — and since count increments BEFORE this check, every
+          // blind retry burned more quota. Put the facts in the body. 2026-09-05.
+          error: {
+            code: 'RATE_LIMITED',
+            message: `Rate limit exceeded for ${category}: ${config.limit} per ${config.windowSeconds}s. `
+              + `Window resets at ${new Date(resetTime * 1000).toISOString()}. `
+              + `Retrying before then consumes quota without succeeding.`
+          },
           meta: { request_id: crypto.randomUUID(), timestamp: new Date().toISOString() }
         }, 429);
       }
