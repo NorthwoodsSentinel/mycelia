@@ -283,6 +283,7 @@ requests.get('/', rateLimit('read'), async (c) => {
   const tags = tagsParam ? tagsParam.split(',').filter(Boolean) : undefined;
   const type = query.type;
   const priority = query.priority;
+  const targetAgentId = query.target_agent_id;
   const sort = query.sort;
   const pagination = parsePagination(query);
 
@@ -301,6 +302,15 @@ requests.get('/', rateLimit('read'), async (c) => {
   if (priority) {
     where += ' AND r.priority = ?';
     params.push(priority);
+  }
+
+  // Directed-inbox filter — "what is addressed to me". The MCP tool advertised this
+  // ("Use this to find requests addressed to you") but it was never read here, so every
+  // inbox query silently returned an unrelated set: a bogus agent id returned the same
+  // rows as a valid one. Found 2026-09-05.
+  if (targetAgentId) {
+    where += ' AND r.target_agent_id = ?';
+    params.push(targetAgentId);
   }
 
   if (tags && tags.length > 0) {
