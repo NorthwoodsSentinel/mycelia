@@ -51,12 +51,23 @@ describe('POST /v1/agents — owner cap, via the route', () => {
     applyMigrationsSync(env);
   });
 
-  it('ADMITS registration when the owner holds 10 rows', async () => {
+  const rowCount = async (env: TestEnv) =>
+    (await env.DB.prepare('SELECT COUNT(*) as c FROM agents WHERE owner_id = ?')
+      .bind(OWNER).first<{ c: number }>())?.c ?? -1;
+
+  it('ADMITS registration when the owner holds 10 rows: 2xx, agent id, row count 11', async () => {
     await seedRows(env, 10);
+    expect(await rowCount(env)).toBe(10);
     const res = await register(env);
     const body: any = await res.json();
-    expect(body?.error?.message ?? '').not.toMatch(/Maximum \d+ agents per owner_id/);
-    expect(res.status).not.toBe(403);
+    // positive assertions — "not 403" would pass on any unrelated failure
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
+    expect(body?.ok).toBe(true);
+    expect(typeof body?.data?.agent?.id).toBe('string');
+    expect(body.data.agent.id.length).toBeGreaterThan(0);
+    expect(body?.data?.agent?.name).toBe('codex-cap-probe');
+    expect(await rowCount(env)).toBe(11);          // the row actually landed
   });
 
   it('REJECTS registration when the owner holds 11 rows', async () => {
