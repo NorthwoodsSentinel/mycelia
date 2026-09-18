@@ -102,8 +102,13 @@ agents.post('/', requireAgentKey, rateLimit('agent.register'), async (c) => {
     'SELECT COUNT(*) as count FROM agents WHERE owner_id = ?'
   ).bind(input.owner_id).first<{ count: number }>();
 
-  if ((ownerCount?.count ?? 0) >= 10) {
-    return c.json(error('FORBIDDEN', 'Maximum 10 agents per owner_id', 403).body, 403);
+  // Cap raised 10 -> 11 (2026-09-18) to admit the Codex review seat.
+  // NOTE: this counts ALL rows for the owner regardless of status. No route
+  // deletes an agent row (no DELETE FROM agents in src/), so the count is a
+  // high-water mark on rows ever created and revocation does NOT free a slot.
+  const OWNER_AGENT_CAP = 11;
+  if ((ownerCount?.count ?? 0) >= OWNER_AGENT_CAP) {
+    return c.json(error('FORBIDDEN', `Maximum ${OWNER_AGENT_CAP} agents per owner_id`, 403).body, 403);
   }
 
   // Resolve capability tags and validate existence
