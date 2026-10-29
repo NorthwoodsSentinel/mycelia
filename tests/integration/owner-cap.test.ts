@@ -1,8 +1,8 @@
 // tests/integration/owner-cap.test.ts
 // ROUTE-LEVEL proof of the owner agent cap. Sends a real POST /v1/agents
 // through src/index.ts. No local CAP constant: the assertions are on the
-// route's own status and message, so this file fails on a cap of 10 and
-// passes on 11 WITHOUT being edited.
+// route's own status and message, so this file fails on a cap of 11 and
+// passes on 12 WITHOUT being edited (cap 11 -> 12, NOR-129).
 import { describe, it, expect, beforeEach } from 'vitest';
 import app from '../../src/index';
 import { applyMigrationsSync, createTestEnv, TestEnv } from './_fixtures';
@@ -55,9 +55,9 @@ describe('POST /v1/agents — owner cap, via the route', () => {
     (await env.DB.prepare('SELECT COUNT(*) as c FROM agents WHERE owner_id = ?')
       .bind(OWNER).first<{ c: number }>())?.c ?? -1;
 
-  it('ADMITS registration when the owner holds 10 rows: 2xx, agent id, row count 11', async () => {
-    await seedRows(env, 10);
-    expect(await rowCount(env)).toBe(10);
+  it('ADMITS registration when the owner holds 11 rows: 2xx, agent id, row count 12', async () => {
+    await seedRows(env, 11);
+    expect(await rowCount(env)).toBe(11);
     const res = await register(env);
     const body: any = await res.json();
     // positive assertions — "not 403" would pass on any unrelated failure
@@ -67,14 +67,22 @@ describe('POST /v1/agents — owner cap, via the route', () => {
     expect(typeof body?.data?.agent?.id).toBe('string');
     expect(body.data.agent.id.length).toBeGreaterThan(0);
     expect(body?.data?.agent?.name).toBe('codex-cap-probe');
-    expect(await rowCount(env)).toBe(11);          // the row actually landed
+    expect(await rowCount(env)).toBe(12);          // the row actually landed
   });
 
-  it('REJECTS registration when the owner holds 11 rows', async () => {
-    await seedRows(env, 11);
+  it('REJECTS registration when the owner holds 12 rows', async () => {
+    await seedRows(env, 12);
     const res = await register(env);
     const body: any = await res.json();
     expect(res.status).toBe(403);
-    expect(body?.error?.message).toBe('Maximum 11 agents per owner_id');
+    expect(body?.error?.message).toBe('Maximum 12 agents per owner_id');
+    expect(await rowCount(env)).toBe(12);          // nothing was inserted
+  });
+
+  it('a deactivated row still counts: 12 rows with one deactivated → still rejected (high-water mark)', async () => {
+    await seedRows(env, 12);
+    await env.DB.prepare("UPDATE agents SET status = 'deactivated' WHERE id = 'cap-11'").run();
+    const res = await register(env);
+    expect(res.status).toBe(403);                  // a retired row does not free a slot (high-water mark)
   });
 });
