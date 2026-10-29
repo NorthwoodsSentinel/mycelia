@@ -248,11 +248,33 @@ describe('claims and responses (A2 + native F1/F2/F4)', () => {
     await env.DB.prepare("UPDATE claims SET status = 'expired', expires_at = '2000-01-01T00:00:00.000Z' WHERE request_id = ?").bind(id).run();
     await env.DB.prepare("UPDATE requests SET status = 'open' WHERE id = ?").bind(id).run();
     expect((await claim(id, margin)).status).toBe(201);
-    const [a, b] = await Promise.all([respond(id, margin), respond(id, margin)]);
-    expect([a.status, b.status].filter((s) => s === 201)).toHaveLength(1);
+    // A real race, not Promise.all on one connection: the first response commits; the second request's claim read
+    // is forced to see the claim as still ACTIVE (as a concurrent request would), so it reaches the insert batch.
+    const activeClaim = await env.DB.prepare("SELECT id, expires_at FROM claims WHERE request_id = ? AND status = 'active'").bind(id).first<any>();
+    expect((await respond(id, margin)).status).toBe(201);
+    const origPrepare = env.DB.prepare.bind(env.DB);
+    (env.DB as any).prepare = (sql: string) => sql.includes("SELECT id, expires_at FROM claims")
+      ? origPrepare(`SELECT '${activeClaim.id}' AS id, '${activeClaim.expires_at}' AS expires_at WHERE ? IS NOT NULL AND ? IS NOT NULL`)
+      : origPrepare(sql);
+    const second = await respond(id, margin);
+    (env.DB as any).prepare = origPrepare;
+    expect(second.status).toBe(409);                       // rejected inside the transaction (0017), not 201, not 500
     expect(await count('SELECT COUNT(*) n FROM responses WHERE request_id = ?', id)).toBe(1);
     const row = await env.DB.prepare('SELECT response_count FROM requests WHERE id = ?').bind(id).first<any>();
     expect(row.response_count).toBe(1);
+  });
+
+  it('MY-12b: the schema itself refuses a second response per claim and a response past the cap', async () => {
+    const id = await seed();
+    expect((await claim(id, margin)).status).toBe(201);
+    const cid = (await env.DB.prepare('SELECT id FROM claims WHERE request_id = ?').bind(id).first<any>()).id;
+    const ins = (rid: string, claimId: string | null) => env.DB.db.prepare(
+      `INSERT INTO responses (id, request_id, responder_id, claim_id, body, created_at) VALUES (?, ?, ?, ?, 'a response body long enough', 'x')`).run(rid, id, margin.id, claimId);
+    ins('resp-a', cid);
+    expect(() => ins('resp-b', cid)).toThrow(/UNIQUE constraint failed: responses\.claim_id/);
+    await env.DB.prepare('UPDATE requests SET response_count = max_responses WHERE id = ?').bind(id).run();
+    expect(() => ins('resp-c', 'another-claim')).toThrow(/RESPONSE_CAP_REACHED/);
+    expect(() => ins('resp-d', null)).not.toThrow();     // claim-free (council follow-up) rows are not capped by 0017
   });
 
   it('MY-13: a non-council follow-up cannot bypass the claim', async () => {

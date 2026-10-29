@@ -18,6 +18,7 @@ import migration0014 from '../../migrations/0014_pop_promoted_trigger.sql?raw';
 import migration0015 from '../../migrations/0015_pop_audit_created_index.sql?raw';
 import migration0013 from '../../migrations/0013_deleg_fail_counter.sql?raw';
 import migration0016 from '../../migrations/0016_client_ref.sql?raw';
+import migration0017 from '../../migrations/0017_one_response_per_claim.sql?raw';
 import { createD1Test, D1Adapter } from './_d1-adapter';
 
 // migration0002 (scope-claim / targeted requests) lives on the PR #3 branch.
@@ -34,7 +35,7 @@ const MIGRATION_0002_TEST_STUB = `
 // schema must carry them. Migrations 0006/0007 (request_type CHECK widen +
 // FK-rebuild dance) are skipped here: app-layer validation is authoritative
 // and no integration test posts ops-bus request types.
-const MIGRATIONS = [migration0001, MIGRATION_0002_TEST_STUB, migration0003, migration0004, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013, migration0014, migration0015, migration0016];
+const MIGRATIONS = [migration0001, MIGRATION_0002_TEST_STUB, migration0003, migration0004, migration0008, migration0009, migration0010, migration0011, migration0012, migration0013, migration0014, migration0015, migration0016, migration0017];
 
 export function createMockKV() {
   const store = new Map<string, string>();

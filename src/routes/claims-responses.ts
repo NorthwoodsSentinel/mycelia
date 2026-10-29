@@ -362,7 +362,16 @@ claimsResponses.post('/:id/responses', rateLimit('response.create'), async (c) =
       ).bind(now(), claimId)
     );
   }
-  await c.env.DB.batch(batchStatements);
+  try {
+    await c.env.DB.batch(batchStatements);
+  } catch (e: any) {
+    // 0017: a concurrent second response on the same claim, or one past the cap, aborts inside the transaction.
+    // The whole batch rolled back; answer 409, not 500.
+    if (/UNIQUE constraint failed: responses\.claim_id|RESPONSE_CAP_REACHED/.test(String(e?.message ?? e))) {
+      return c.json(error('CONFLICT', 'A response is already recorded for this claim, or the response cap is reached', 409).body, 409);
+    }
+    throw e;
+  }
 
   try {
     const eventType = isCouncilFollowUp ? 'response.council_reply' : 'response.created';
