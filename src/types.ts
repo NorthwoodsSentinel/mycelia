@@ -265,6 +265,9 @@ export interface CreateRequestInput {
   artifacts?: string[];         // URLs / SHAs / file paths bundled with this request
   action_required?: ActionRequired;
   blocking?: string;            // prior request ID whose response this waits on
+  // 0016 (NOR-129): requester-scoped idempotency key. A second create with the same (requester, client_ref)
+  // returns 409 DUPLICATE_CLIENT_REF carrying the existing request instead of inserting.
+  client_ref?: string;
 }
 
 export interface CreateClaimInput {

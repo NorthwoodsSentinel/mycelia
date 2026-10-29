@@ -37,6 +37,30 @@ function validateStringArray(
   return { value: JSON.stringify(input), error: null };
 }
 
+// 0016 (NOR-129): requester-scoped idempotency key. Uppercase, digits and '-', 3-64 chars, no leading '-'.
+export const CLIENT_REF_RE = /^[A-Z0-9][A-Z0-9-]{2,63}$/;
+
+async function sha256Hex(text: string): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** The caller's own request for a client_ref, or null. Never crosses requester identity. */
+async function findByClientRef(db: D1Database, requesterId: string, clientRef: string) {
+  return db.prepare('SELECT id, created_at, body FROM requests WHERE requester_id = ? AND client_ref = ?')
+    .bind(requesterId, clientRef).first<{ id: string; created_at: string; body: string }>();
+}
+
+/** 409 for an existing (requester, client_ref): the existing id, its created_at, and sha256 of its STORED body. */
+async function duplicateClientRef(existing: { id: string; created_at: string; body: string }) {
+  return {
+    ok: false,
+    error: { code: 'DUPLICATE_CLIENT_REF', message: 'A request with this client_ref already exists for this requester' },
+    data: { id: existing.id, created_at: existing.created_at, body_sha256: await sha256Hex(existing.body) },
+    meta: { request_id: crypto.randomUUID(), timestamp: now() },
+  };
+}
+
 // ─── POST /v1/requests — Create help request ──────────────────────────────────
 
 requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
@@ -57,6 +81,15 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
   // Validate body
   if (!input.body || input.body.length < 20 || input.body.length > 10000) {
     return c.json(error('VALIDATION_ERROR', 'body must be 20-10,000 characters', 400).body, 400);
+  }
+  if (input.client_ref !== undefined && input.client_ref !== null &&
+      (typeof input.client_ref !== 'string' || !CLIENT_REF_RE.test(input.client_ref))) {
+    return c.json(error('VALIDATION_ERROR', 'client_ref must match ^[A-Z0-9][A-Z0-9-]{2,63}$', 400).body, 400);
+  }
+  const clientRef: string | null = input.client_ref ?? null;
+  if (clientRef) {
+    const existing = await findByClientRef(c.env.DB, auth.agent_id, clientRef);
+    if (existing) return c.json(await duplicateClientRef(existing), 409);
   }
   // 2026-08-24: D1 bind() throws on non-scalar values (arrays pass a .length check; objects have no
   // length at all) and the throw surfaced as a bare 500 with no field name. Bind at the boundary:
@@ -202,8 +235,9 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
       INSERT INTO requests (id, requester_id, title, body, request_type, priority,
                             max_responses, context, expires_at, created_at, updated_at,
                             target_agent_id, scope_claim_json,
-                            references_json, supersedes, artifacts_json, action_required, blocking)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            references_json, supersedes, artifacts_json, action_required, blocking,
+                            client_ref)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       id,
       auth.agent_id,
@@ -222,7 +256,8 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
       input.supersedes ?? null,
       artifactsJson.value,
       actionRequired,
-      input.blocking ?? null
+      input.blocking ?? null,
+      clientRef
     ),
   ];
   for (const capId of capabilityIds) {
@@ -241,6 +276,12 @@ requests.post('/', requireAgentKey, rateLimit('request.create'), async (c) => {
     await c.env.DB.batch(batchStatements);
   } catch (e: any) {
     const shape = Object.fromEntries(Object.entries(input).map(([k, v]) => [k, Array.isArray(v) ? 'array' : typeof v]));
+    // Concurrent create with the same (requester, client_ref): the unique index rejected the loser, and the
+    // batch rolled back as a whole. Answer with the winner, exactly as the pre-check would have.
+    if (clientRef && /UNIQUE constraint failed/i.test(String(e?.message ?? e))) {
+      const existing = await findByClientRef(c.env.DB, auth.agent_id, clientRef);
+      if (existing) return c.json(await duplicateClientRef(existing), 409);
+    }
     console.error('[requests] D1 batch failed', JSON.stringify({ requester: auth.agent_id, message: String(e?.message ?? e), shape }));
     if (/D1_TYPE_ERROR|not supported/i.test(String(e?.message ?? e))) return c.json(error('VALIDATION_ERROR', `unbindable field value: ${String(e?.message ?? e)}`, 400).body, 400);
     throw e;
@@ -331,6 +372,18 @@ export function buildRequestListFilter(query: Record<string, string | undefined>
 
 requests.get('/', rateLimit('read'), async (c) => {
   const query = c.req.query();
+
+  // 0016 (NOR-129): client_ref lookup is bound to the CALLER as requester and ignores every other filter
+  // (status, target, pagination): a caller can only ever find its own request for its own reference.
+  if (query.client_ref !== undefined) {
+    if (!CLIENT_REF_RE.test(query.client_ref)) {
+      return c.json(error('VALIDATION_ERROR', 'client_ref must match ^[A-Z0-9][A-Z0-9-]{2,63}$', 400).body, 400);
+    }
+    const auth = c.get('auth');
+    const row = await c.env.DB.prepare('SELECT * FROM requests WHERE requester_id = ? AND client_ref = ?')
+      .bind(auth.agent_id, query.client_ref).first();
+    return c.json(success({ requests: row ? [row] : [], pagination: { page: 1, limit: 1, total: row ? 1 : 0, has_more: false } }));
+  }
   const sort = query.sort;
   const pagination = parsePagination(query);
 
@@ -382,11 +435,23 @@ requests.get('/:id', rateLimit('read'), async (c) => {
     `).bind(id).all()
   ]);
 
+  // 0016 (NOR-129): claim history (server-set agent and timestamps) for the REQUESTER only. Rows persist
+  // after a claim expires, so receipt evidence survives the claimed → open lifecycle step.
+  const auth = c.get('auth');
+  let claims: unknown[] | undefined;
+  if (auth?.agent_id && auth.agent_id === (request as { requester_id: string }).requester_id) {
+    const r = await c.env.DB.prepare(
+      'SELECT agent_id, status, claimed_at AS created_at, expires_at, completed_at FROM claims WHERE request_id = ? ORDER BY claimed_at ASC, id ASC'
+    ).bind(id).all();
+    claims = r.results;
+  }
+
   return c.json(success({
     request: {
       ...request,
       tags: tagsResult.results,
-      responses: responsesResult.results
+      responses: responsesResult.results,
+      ...(claims !== undefined ? { claims } : {}),
     }
   }));
 });
