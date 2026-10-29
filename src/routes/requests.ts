@@ -441,7 +441,7 @@ requests.get('/:id', rateLimit('read'), async (c) => {
   let claims: unknown[] | undefined;
   if (auth?.agent_id && auth.agent_id === (request as { requester_id: string }).requester_id) {
     const r = await c.env.DB.prepare(
-      'SELECT agent_id, status, claimed_at AS created_at, expires_at, completed_at FROM claims WHERE request_id = ? ORDER BY claimed_at ASC, id ASC'
+      'SELECT id, agent_id, status, claimed_at AS created_at, expires_at, completed_at FROM claims WHERE request_id = ? ORDER BY claimed_at ASC, id ASC'
     ).bind(id).all();
     claims = r.results;
   }

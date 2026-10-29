@@ -206,6 +206,7 @@ describe('claims and responses (A2 + native F1/F2/F4)', () => {
     const asOrch = await call(req('GET', `/v1/requests/${id}`, orch.key));
     expect(asOrch.json.data.request.claims).toHaveLength(1);
     expect(asOrch.json.data.request.claims[0].agent_id).toBe(margin.id);
+    expect(asOrch.json.data.request.claims[0].id).toBe((await env.DB.prepare('SELECT id FROM claims WHERE request_id = ?').bind(id).first<any>()).id);
     expect(typeof asOrch.json.data.request.claims[0].created_at).toBe('string');
     for (const a of [margin, other]) {
       const r = await call(req('GET', `/v1/requests/${id}`, a.key));
