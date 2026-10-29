@@ -132,12 +132,17 @@ agents.post('/', requireAgentKey, rateLimit('agent.register'), async (c) => {
   const { key, hash, prefix } = await generateApiKey('agent');
   const timestamp = now();
 
-  // Insert agent
-  await c.env.DB.prepare(
+  // Insert agent — CONDITIONALLY on the cap, in one statement (NOR-129 cap audit): the count above is a fast path, but
+  // two concurrent registrations could both pass it. A single INSERT…SELECT…WHERE is atomic, so the cap holds.
+  const inserted = await c.env.DB.prepare(
     `INSERT INTO agents (id, name, description, owner_id, api_key_hash, key_prefix, trust_score,
       trust_score_as_helper, trust_score_as_requester, status, request_count, response_count, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 0.5, 0.5, 0.5, 'active', 0, 0, ?)`
-  ).bind(id, input.name, input.description ?? null, input.owner_id, hash, prefix, timestamp).run();
+     SELECT ?, ?, ?, ?, ?, ?, 0.5, 0.5, 0.5, 'active', 0, 0, ?
+     WHERE (SELECT COUNT(*) FROM agents WHERE owner_id = ?) < ?`
+  ).bind(id, input.name, input.description ?? null, input.owner_id, hash, prefix, timestamp, input.owner_id, OWNER_AGENT_CAP).run();
+  if ((inserted.meta?.changes ?? 0) !== 1) {
+    return c.json(error('FORBIDDEN', `Maximum ${OWNER_AGENT_CAP} agents per owner_id`, 403).body, 403);
+  }
 
   // Insert agent_capabilities
   for (const cap of capabilityRows) {

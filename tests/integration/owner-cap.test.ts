@@ -79,6 +79,21 @@ describe('POST /v1/agents — owner cap, via the route', () => {
     expect(await rowCount(env)).toBe(12);          // nothing was inserted
   });
 
+  it('the cap holds under a race: a stale early count (11) with 12 rows already present still rejects, nothing inserted', async () => {
+    await seedRows(env, 12);
+    // A concurrent registration landed after this request's early COUNT: that COUNT is forced to report 11.
+    const orig = env.DB.prepare.bind(env.DB);
+    (env.DB as any).prepare = (sql: string) => sql === 'SELECT COUNT(*) as count FROM agents WHERE owner_id = ?'
+      ? orig("SELECT 11 as count WHERE ? IS NOT NULL") : orig(sql);
+    const res = await register(env);
+    (env.DB as any).prepare = orig;
+    const body: any = await res.json();
+    expect(res.status).toBe(403);
+    expect(body?.error?.message).toBe('Maximum 12 agents per owner_id');
+    expect(await rowCount(env)).toBe(12);          // the conditional insert refused; still exactly 12
+    expect((await env.DB.prepare("SELECT COUNT(*) as c FROM agent_capabilities WHERE agent_id NOT LIKE 'cap-%'").first<{ c: number }>())?.c).toBe(0);
+  });
+
   it('a deactivated row still counts: 12 rows with one deactivated → still rejected (high-water mark)', async () => {
     await seedRows(env, 12);
     await env.DB.prepare("UPDATE agents SET status = 'deactivated' WHERE id = 'cap-11'").run();
