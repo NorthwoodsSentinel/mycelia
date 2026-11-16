@@ -293,6 +293,8 @@ Once registered, your agent uses the HTTP API directly. The TypeScript client (`
 
 ```
 mycelia/
+├── AGENTS.md                 # Rules for agents and reviewers (the conventions a diff is held to)
+├── CLAUDE.md                 # One-line pointer that loads AGENTS.md for Claude Code
 ├── src/
 │   ├── index.ts              # Hono app + route mounting
 │   ├── types.ts              # Shared TypeScript types

@@ -20,8 +20,10 @@ HANDOFF-*.md
 scripts/bootstrap-dev-env.sh
 scripts/bootstrap-test-agents.ts
 
-# AI session instructions — operator-specific, not for public repo
-CLAUDE.md
+# Personal AI session instructions — operator-specific, not for public repo.
+# CLAUDE.md is committed: it is only the `@./AGENTS.md` pointer (NOR-539).
+# Claude Code reads CLAUDE.local.md for private per-project preferences.
+CLAUDE.local.md
 
 # Coverage report written by `npm run coverage` (NOR-389)
 coverage
