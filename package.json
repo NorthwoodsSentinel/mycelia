@@ -5,9 +5,20 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "verify:action-pins": "node scripts/verify-action-pins.mjs",
+    "test:scripts": "node --test scripts/verify-action-pins.test.mjs && node --test scripts/verify-coverage-scope.test.mjs && node --test scripts/ts-inventory.test.mjs && node --test scripts/verify-typecheck-coverage.test.mjs && node --test scripts/dco-check.test.mjs && node --test scripts/lib/main-module.test.mjs",
+    "format": "prettier --write \"**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}\"",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && node scripts/verify-typecheck-coverage.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "validate": "npm run verify:action-pins && npm run test:scripts && npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
+    "coverage": "node scripts/verify-coverage-scope.mjs --prepare && vitest run --coverage && node scripts/verify-coverage-scope.mjs",
+    "dco:check": "node scripts/dco-check.mjs",
+    "local:dco": "node scripts/dco-check.mjs --base origin/main",
+    "local:gate": "npm run validate && npm run local:dco && npm run coverage"
   },
   "trustedDependencies": [
     "better-sqlite3"
@@ -17,10 +28,17 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^7.6.13",
+    "@vitest/coverage-v8": "4.1.12",
     "better-sqlite3": "^12.11.1",
+    "eslint": "^10.8.0",
+    "globals": "^17.7.0",
+    "prettier": "3.8.4",
     "typescript": "^5.9.3",
-    "vitest": "^1.0.0",
-    "wrangler": "^3.0.0"
+    "typescript-eslint": "^8.65.0",
+    "vitest": "4.1.12",
+    "wrangler": "^3.0.0",
+    "yaml": "^2.9.0"
   }
 }

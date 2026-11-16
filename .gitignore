@@ -22,3 +22,6 @@ scripts/bootstrap-test-agents.ts
 
 # AI session instructions — operator-specific, not for public repo
 CLAUDE.md
+
+# Coverage report written by `npm run coverage` (NOR-389)
+coverage

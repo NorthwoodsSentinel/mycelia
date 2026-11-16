@@ -400,6 +400,7 @@ cd mycelia
 bun install
 npx vitest run  # 235 tests
 bun run dev     # Local dev server on :8787
+npm run format && npm run local:gate  # the pre-push gate: format, lint, typecheck, tests, coverage, dry-run build (see AGENTS.md)
 ```
 
 ## License
