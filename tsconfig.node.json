@@ -1,0 +1,21 @@
+{
+  // The TypeScript that runs under Node or Bun: the Vitest suite and its
+  // helpers, the CLI scripts, and the Vitest config. NOR-389. It extends the
+  // Worker program (tsconfig.json) so the strict options are stated once, and
+  // adds Node's types; tests import src/, so the Workers types stay too.
+  // `vite/client` types the `?raw` SQL imports in tests/integration/_fixtures.ts
+  // (Vite, which Vitest runs on, resolves them). tsconfig.json stays the Worker
+  // program alone, so a Node-only API used in src/ still fails to compile.
+  // Both projects are typechecked by `npm run typecheck`, and
+  // scripts/verify-typecheck-coverage.mjs fails on any tracked TypeScript file
+  // in neither.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["@cloudflare/workers-types", "node", "vite/client"]
+  },
+  "include": ["tests/**/*.ts", "scripts/**/*.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

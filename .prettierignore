@@ -1,0 +1,66 @@
+# Files `npm run format` and `npm run format:check` leave alone. mycelia
+# (NOR-389): copied from NorthwoodsSentinel/fleet-mcp origin/main f1bea96
+# (blob 5c8bf4c839ca30b13bef0bcb7272372a81ba5fe0), which took it from WALL-E,
+# and edited for this repo: no vendored code; the list below. Prettier also
+# skips everything in .gitignore (node_modules, .wrangler, dist, coverage).
+# Record: PROVENANCE-CHECK.md.
+
+# Coverage report written by `npm run coverage`.
+coverage/
+
+# NOR-389 follow-up F1 (listed in the NOR-389 pull
+# request; ticket to be filed): existing first-party code. Every one of these
+# files failed the format check when it was measured for NOR-389 (49 of the
+# 50 existing script files; the 50th, vitest.config.ts, was rewritten here),
+# and existing code is not reformatted in NOR-389, which changes no product
+# code beyond what the gate needs. One line each; remove a line when its file
+# is formatted. AGENTS.md records the exception, as fleet-mcp's NOR-355 did.
+scripts/MyceliaClient.ts
+scripts/seed-fleet.ts
+src/cron.ts
+src/index.ts
+src/lib/audit.ts
+src/lib/db.ts
+src/lib/delegation.ts
+src/lib/dpop.ts
+src/lib/kv.ts
+src/lib/pop.ts
+src/lib/revocation.ts
+src/lib/scope-claim.ts
+src/lib/utils.ts
+src/middleware/auth.ts
+src/middleware/fleet-gate.ts
+src/middleware/rate-limit.ts
+src/middleware/sanitize.ts
+src/models/state-machine.ts
+src/models/trust.ts
+src/routes/admin.ts
+src/routes/agents.ts
+src/routes/capabilities.ts
+src/routes/claims-responses.ts
+src/routes/feed.ts
+src/routes/fleet-bindings.ts
+src/routes/ratings.ts
+src/routes/register.ts
+src/routes/requests.ts
+src/routes/schemas.ts
+src/types.ts
+tests/delegation.test.ts
+tests/dpop.test.ts
+tests/fleet-mode.test.ts
+tests/integration/_d1-adapter.ts
+tests/integration/_fixtures.ts
+tests/integration/_smoke.test.ts
+tests/integration/admin-pop.test.ts
+tests/integration/client-ref.test.ts
+tests/integration/inbox-filter.test.ts
+tests/integration/owner-cap.test.ts
+tests/integration/rate-limit.test.ts
+tests/integration/response-bugs.test.ts
+tests/key-rotation.test.ts
+tests/pop.test.ts
+tests/request-list-filter.test.ts
+tests/sanitize.test.ts
+tests/scope-claim.test.ts
+tests/state-machine.test.ts
+tests/trust.test.ts

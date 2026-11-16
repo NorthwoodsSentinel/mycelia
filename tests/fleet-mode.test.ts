@@ -152,11 +152,18 @@ describe('registrationGate middleware', () => {
       _responses: responses,
     };
   }
+  // The stub carries only the two members registrationGate reads (env, json);
+  // Hono's Context has ~20 more and no public constructor for a bare one, so
+  // TypeScript cannot relate the two shapes without going through unknown.
+  // NOR-389: the cast was a single `as`, which tsc rejects (TS2352) once tests
+  // are typechecked; behaviour is unchanged.
+  type GateContext = Parameters<typeof registrationGate>[0];
+  const asGateContext = (ctx: ReturnType<typeof makeContext>) => ctx as unknown as GateContext;
 
   it('fleet: returns 403 and does not call next', async () => {
     const ctx = makeContext('fleet');
     let nextCalled = false;
-    await registrationGate(ctx as Parameters<typeof registrationGate>[0], async () => { nextCalled = true; });
+    await registrationGate(asGateContext(ctx), async () => { nextCalled = true; });
     expect(ctx._responses[0]?.[1]).toBe(403);
     expect(nextCalled).toBe(false);
   });
@@ -164,7 +171,7 @@ describe('registrationGate middleware', () => {
   it('company: returns 403 and does not call next', async () => {
     const ctx = makeContext('company');
     let nextCalled = false;
-    await registrationGate(ctx as Parameters<typeof registrationGate>[0], async () => { nextCalled = true; });
+    await registrationGate(asGateContext(ctx), async () => { nextCalled = true; });
     expect(ctx._responses[0]?.[1]).toBe(403);
     expect(nextCalled).toBe(false);
   });
@@ -172,7 +179,7 @@ describe('registrationGate middleware', () => {
   it('community: calls next (no-op)', async () => {
     const ctx = makeContext('community');
     let nextCalled = false;
-    await registrationGate(ctx as Parameters<typeof registrationGate>[0], async () => { nextCalled = true; });
+    await registrationGate(asGateContext(ctx), async () => { nextCalled = true; });
     expect(ctx._responses).toHaveLength(0);
     expect(nextCalled).toBe(true);
   });
@@ -181,7 +188,7 @@ describe('registrationGate middleware', () => {
     // MODE is optional in Env — defensive fallback to community allows backward-compat
     const ctx = makeContext(undefined);
     let nextCalled = false;
-    await registrationGate(ctx as Parameters<typeof registrationGate>[0], async () => { nextCalled = true; });
+    await registrationGate(asGateContext(ctx), async () => { nextCalled = true; });
     expect(nextCalled).toBe(true);
   });
 });
