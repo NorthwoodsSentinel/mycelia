@@ -97,7 +97,8 @@ import {
   readFileSync,
 } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { isMainModule } from "./lib/main-module.mjs";
 import { isAlias, isMap, isScalar, isSeq, parseDocument, visit } from "yaml";
 
 // Edit 5: his `SHA_REF`, copied from `dependency-refresh.mjs:111`.
@@ -354,5 +355,7 @@ export function main(root = repoRoot, hooks = {}) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  process.exit(main());
+// Entry guard: the shared helper also compares the symlink-resolved path, so
+// a run through a symlinked checkout cannot skip the check and exit 0
+// (NOR-389, Codex round 2).
+if (isMainModule(import.meta.url)) process.exit(main());

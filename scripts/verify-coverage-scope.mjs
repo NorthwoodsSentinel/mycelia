@@ -95,7 +95,8 @@ import {
   unlinkSync,
 } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { isMainModule } from "./lib/main-module.mjs";
 import { trackedTypeScript } from "./lib/ts-inventory.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
@@ -541,10 +542,10 @@ export async function run({
   return failures;
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+// Entry guard: the shared helper also compares the symlink-resolved path, so
+// a run through a symlinked checkout cannot skip the check and exit 0
+// (NOR-389, Codex round 2).
+if (isMainModule(import.meta.url)) {
   const preparing = process.argv.includes("--prepare");
   const failures = preparing
     ? prepare()

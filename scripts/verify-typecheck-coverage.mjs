@@ -35,7 +35,8 @@ import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { isMainModule } from "./lib/main-module.mjs";
 import { trackedTypeScript } from "./lib/ts-inventory.mjs";
 
 const repoRoot = path.resolve(
@@ -213,10 +214,10 @@ export function run({
   };
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+// Entry guard: the shared helper also compares the symlink-resolved path, so
+// a run through a symlinked checkout cannot skip the check and exit 0
+// (NOR-389, Codex round 2).
+if (isMainModule(import.meta.url)) {
   const { failures, checked } = run();
   if (failures.length > 0) {
     console.error(
