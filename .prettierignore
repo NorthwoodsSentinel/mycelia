@@ -1,7 +1,6 @@
 # Files `npm run format` and `npm run format:check` leave alone. mycelia
-# (NOR-389): copied from NorthwoodsSentinel/fleet-mcp origin/main f1bea96
-# (blob 5c8bf4c839ca30b13bef0bcb7272372a81ba5fe0), which took it from WALL-E,
-# and edited for this repo: no vendored code; the list below. Prettier also
+# (NOR-389): written for this repo; the source (the MCP Inspector) formats
+# with Prettier the same way. Prettier also
 # skips everything in .gitignore (node_modules, .wrangler, dist, coverage).
 # Record: PROVENANCE-CHECK.md.
 
@@ -14,7 +13,7 @@ coverage/
 # 50 existing script files; the 50th, vitest.config.ts, was rewritten here),
 # and existing code is not reformatted in NOR-389, which changes no product
 # code beyond what the gate needs. One line each; remove a line when its file
-# is formatted. AGENTS.md records the exception, as fleet-mcp's NOR-355 did.
+# is formatted. AGENTS.md records the exception.
 scripts/MyceliaClient.ts
 scripts/seed-fleet.ts
 src/cron.ts

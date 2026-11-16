@@ -19,30 +19,21 @@
 // The platform is a parameter so the Windows case is exercised on the POSIX
 // machines that run this suite, the same pattern as `win-shell-args.mjs`.
 //
-// In this repo (WALL-E, NOR-349): copied unchanged from
-// modelcontextprotocol/inspector at commit
-// d330df9617e44ec893bc1a53618662239342d433, scripts/lib/main-module.mjs (blob
-// 45a6baf3ebc1812fd8b4d7910b2cf3d77a2d7610), because scripts/dco-check.mjs
-// imports it. The scripts named above are the source's. Record:
-// PROVENANCE-CHECK.md.
+// In mycelia (NOR-389): from modelcontextprotocol/inspector at commit d330df9617e44ec893bc1a53618662239342d433,
+// scripts/lib/main-module.mjs (blob 45a6baf3ebc1812fd8b4d7910b2cf3d77a2d7610),
+// because scripts/dco-check.mjs imports it. The scripts named above are the
+// source's. Record: PROVENANCE-CHECK.md.
 //
-// One edit to his code, found by Codex attack case 21 (NOR-349): the entry
-// path is ALSO compared after resolving symlinks. Node gives the entry module
-// an `import.meta.url` built from the file's REAL path (unless
-// `--preserve-symlinks-main`), while `process.argv[1]` keeps the path as
-// typed. Run through a symlinked directory (macOS `/tmp` and the default
-// temp directory are both symlinks), his comparison was never true: `main()`
-// did not run and the process exited 0 having checked nothing, which for the
-// sign-off check reads as a pass. The original comparison is kept first; the
-// resolved one is added. A path that cannot be resolved (it does not exist,
-// or it is a Windows path given to a POSIX machine in a test) falls back to
-// his behaviour alone.
-//
-// In fleet-mcp (NOR-357): copied unchanged from NorthwoodsSentinel/walle
-// origin/main 5fb8747, scripts/lib/main-module.mjs (blob
-// b87aa54ce26ce2877f5814369d378373074f1d18), WALL-E's symlink edit above
-// included. This paragraph is the only edit. Record: PROVENANCE-CHECK.md,
-// section 4.
+// One edit to the source's code: the entry path is ALSO compared after
+// resolving symlinks. Node gives the entry module an `import.meta.url` built
+// from the file's REAL path (unless `--preserve-symlinks-main`), while
+// `process.argv[1]` keeps the path as typed. Run through a symlinked
+// directory (macOS `/tmp` and the default temp directory are both symlinks),
+// the source's comparison was never true: `main()` did not run and the process
+// exited 0 having checked nothing, which for the sign-off check reads as a
+// pass. The original comparison is kept first; the resolved one is added. A
+// path that cannot be resolved (it does not exist, or it is a Windows path
+// given to a POSIX machine in a test) falls back to the source's behaviour.
 
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -66,7 +57,7 @@ export function isMainModule(
   const asUrl = (file) =>
     pathToFileURL(file, { windows: platform === "win32" }).href;
   if (importMetaUrl === asUrl(argv1)) return true;
-  // NOR-349 edit (see header): compare the symlink-resolved path too.
+  // mycelia edit (see header): compare the symlink-resolved path too.
   let real;
   try {
     real = realpathSync(argv1);

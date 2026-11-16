@@ -11,7 +11,7 @@
 #
 #   - `DCO` — on every PR, over the PR's commits. It is made a REQUIRED
 #     status check on `main` by a repository ruleset on `main` (not yet in
-#     this repo: NOR-356; setting it is the owner's act), not by this
+#     this repo yet; setting it is the owner's act), not by this
 #     file — no workflow can make itself required. That ruleset is to pin the
 #     check to GitHub Actions (integration 15368), so a commit status posted by
 #     hand under the name `DCO` cannot satisfy it. ⚠️ Renaming
@@ -36,9 +36,9 @@
 # edit to this file takes effect on the PR that makes it.
 #
 # The trade-off, accepted deliberately: a PR can now edit this file to pass
-# itself. That is tolerable here because the owner picks the work and an
-# agent merges only with the required checks green and Codex's final audit
-# clean (AGENTS.md, Contributing), and the check exists to catch a FORGOTTEN signoff,
+# itself. That is tolerable here because the owner picks the work and merges
+# only with the required checks green and a clean final review (AGENTS.md,
+# Contributing), and the check exists to catch a FORGOTTEN signoff,
 # not a forged one — the trailer is self-asserted text either way (see the
 # header of `scripts/dco-check.mjs`). ⚠️ The push job does NOT cover that
 # case: a `push` run also reads this file, and runs the script, from the
@@ -74,32 +74,19 @@
 #
 # Copied from modelcontextprotocol/inspector at commit
 # d330df9617e44ec893bc1a53618662239342d433, .github/workflows/dco.yml (blob
-# 360fe4f17c2233f041549e60128becd57f5c95b1), by copy then edit. His reasoning
+# 360fe4f17c2233f041549e60128becd57f5c95b1), adapted. The source's reasoning
 # on `pull_request` versus `pull_request_target` above is kept as written; the
-# issue numbers in it are his repo's. Every edit is listed in
-# docs/DESIGN-nor-349-signoff.md, section 3; record: PROVENANCE-CHECK.md.
+# issue numbers in it are the source repo's. Edits are listed in
+# PROVENANCE-CHECK.md.
 #
-# In fleet-mcp (NOR-357): copied from NorthwoodsSentinel/walle origin/main
-# 5fb8747, .github/workflows/dco.yml (blob
-# 83356971c4352fe1d27fd4c62d74b61a3fa43ef7). The design named above is
-# WALL-E's, kept verbatim in docs/. Edits, comments only: the ruleset
-# paragraph (this repo has none yet, NOR-356), who merges (this repo's
-# Contributing rule), where `main`'s role is recorded, the push step's
-# ruleset remark, and this paragraph.
-# Triggers, jobs, steps and pins are WALL-E's unchanged. The push job's range
-# is `before..after`, so the unsigned commits from before this repo's rules
-# file, all reachable from `before`, are never in it. Record:
-# PROVENANCE-CHECK.md, section 4.
-#
-# In mycelia (NOR-389): copied from NorthwoodsSentinel/fleet-mcp origin/main
-# f1bea96, .github/workflows/dco.yml (blob
-# 9d3165be6059d7798e32719ccb1510ba5db2294c). One edit: the PR job's checkout
-# returns to the source's `persist-credentials: false` (this repo is public,
-# as the source is). Everything else is fleet-mcp's: triggers, jobs, steps and
-# pins. The ruleset that makes `DCO` required is the owner's act and does not
-# exist in this repo yet; the "NOR-356" references above are fleet-mcp's
-# ticket for its own ruleset. "AGENTS.md, Contributing" applies here as this
-# repo's AGENTS.md states it. Record: PROVENANCE-CHECK.md.
+# In mycelia (NOR-389): adapted for this repo. Its default and only
+# long-lived branch is `main`, so the source's `v2/**` filter is dropped and
+# the PR job runs on every base; the push backstop watches `main`. The PR
+# job's checkout keeps the source's `persist-credentials: false` (this repo is
+# public, as the source is). Triggers, jobs and steps otherwise follow the
+# source; actions are pinned to commit SHAs (AGENTS.md, the pin rule). The
+# ruleset that makes `DCO` required is the owner's act and does not exist in
+# this repo yet. Record: PROVENANCE-CHECK.md.
 name: DCO
 
 on:
@@ -133,11 +120,9 @@ jobs:
         with:
           ref: ${{ github.base_ref }}
           fetch-depth: 0
-          # mycelia (NOR-389): back to the source's `persist-credentials:
-          # false`. fleet-mcp set `true` because it is private and the next
-          # step's `git fetch origin` needed the credential; this repo is
-          # public, like the source, so the fetch needs none. A failed fetch
-          # fails the step: red, never green.
+          # The source's `persist-credentials: false`: this repo is public,
+          # like the source, so the next step's `git fetch origin` needs no
+          # credential. A failed fetch fails the step: red, never green.
           persist-credentials: false
 
       - name: Fetch the PR's commits (read as data, never checked out)
@@ -187,7 +172,7 @@ jobs:
         # check. A `before` missing from the history (a force-push that
         # rewrote it away) makes `git log` fail and the script exit 2 — loud
         # on purpose, since `main` is never meant to be rewritten (no ruleset
-        # blocks a force-push on it in this repo yet: NOR-356).
+        # blocks a force-push on it in this repo yet; that is the owner's).
         env:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.event.after }}

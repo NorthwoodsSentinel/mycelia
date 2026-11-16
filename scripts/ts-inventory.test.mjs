@@ -1,6 +1,5 @@
-// Unit tests for scripts/lib/ts-inventory.mjs (NOR-355): which tracked files
+// Unit tests for scripts/lib/ts-inventory.mjs (NOR-389): which tracked files
 // the inventory requires, and that it reads Git's NUL-delimited output.
-// Codex's attack cases for it (11-14) are in tools/attack-inventory.test.ts.
 // Run via `npm run test:scripts`, which names this file by path.
 
 import { test } from "node:test";

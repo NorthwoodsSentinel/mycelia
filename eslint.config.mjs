@@ -1,33 +1,27 @@
-// Lint configuration. mycelia (NOR-389): copied from
-// NorthwoodsSentinel/fleet-mcp origin/main f1bea96 (blob
-// 24be32c48853228cc0437f8d82fe728a6ef0d566) and edited for this repo: two
-// parser projects (tsconfig.json, the Worker program; tsconfig.node.json, the
-// tests and scripts), the `.mjs` guards ignored by extension rather than all
-// of scripts/ (scripts/ also holds two TypeScript CLIs, which are linted),
-// no vendored code, and the exact-path list of existing files with findings
-// (follow-up F2). Named `.mjs`, not fleet-mcp's `.js`: this package.json has
-// no `"type": "module"`, and adding one is a package-wide change the gate does
-// not need. Record: PROVENANCE-CHECK.md. fleet-mcp's header follows.
+// Lint configuration. mycelia (NOR-389).
 //
-// Lint configuration. NOR-355; design: docs/DESIGN-nor-355-check.md, section 4.
-//
-// Copied from WALL-E's eslint.config.js (NorthwoodsSentinel/walle origin/main
-// 5fb8747, blob 109d7e55) and edited: one TypeScript block over all four
-// TypeScript extensions, one parser project (tsconfig.json), and this repo's
-// ignore list. The rule set is the MCP Inspector's root config (eslint.config.js
-// at d330df96, blob 9990e974), reduced to one scope: `js.configs.recommended`,
-// `tseslint.configs.recommended`, its `_`-prefix `no-unused-vars` block and
-// type-aware `no-floating-promises` at `error`.
+// The rule set is the MCP Inspector's root config (modelcontextprotocol/inspector at commit d330df9617e44ec893bc1a53618662239342d433,
+// eslint.config.js, blob 9990e97464a0905f38044990f69a309b18e0fb0d), reduced
+// to one scope: `js.configs.recommended`, `tseslint.configs.recommended`, its
+// `_`-prefix `no-unused-vars` block and type-aware `no-floating-promises` at
+// `error`. Adapted for this repo: one TypeScript block over all four
+// TypeScript extensions, two parser projects (tsconfig.json, the Worker
+// program; tsconfig.node.json, the tests and scripts), and this repo's ignore
+// list, including the exact-path list of existing files with findings
+// (follow-up F2). Record: PROVENANCE-CHECK.md.
 //
 // `npm run lint` is `eslint . --max-warnings 0`: the whole tree, and a warning
 // fails exactly as an error does (AGENTS.md: lint has no warning tier).
 //
-// The parser is given tsconfig.json. A TypeScript file outside that project
-// fails lint with "was not found in any of the provided project(s)".
+// The parser is given both projects. A TypeScript file outside them fails
+// lint with "was not found in any of the provided project(s)".
 //
-// The `.mjs` files under scripts/ are not linted, as in WALL-E and the
-// Inspector (his lint scopes do not cover `scripts/`); they are
-// format-checked and tested under `node --test`.
+// The `.mjs` guards under scripts/ are not linted, as in the Inspector (its
+// lint scopes do not cover `scripts/`); they are format-checked and tested
+// under `node --test`. The two TypeScript CLIs in scripts/ are linted.
+//
+// Named `.mjs`: this package.json has no `"type": "module"`, and adding one is
+// a package-wide change the gate does not need.
 
 import js from "@eslint/js";
 import globals from "globals";

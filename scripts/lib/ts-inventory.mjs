@@ -1,7 +1,6 @@
 // The tracked-TypeScript inventory that verify-typecheck-coverage.mjs and
-// verify-coverage-scope.mjs compare their sets against. NOR-355; design:
-// docs/DESIGN-nor-355-check.md, "Every tracked TypeScript file is typechecked
-// and coverage-measured, or named" (Codex design review r1, finding 1).
+// verify-coverage-scope.mjs compare their sets against (NOR-389): every
+// tracked TypeScript file is typechecked and coverage-measured, or named.
 //
 // Behaviour copied from the MCP Inspector's scripts/verify-typecheck-coverage.mjs
 // (modelcontextprotocol/inspector d330df9617e44ec893bc1a53618662239342d433,

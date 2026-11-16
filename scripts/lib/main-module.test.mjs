@@ -2,17 +2,10 @@
 // Windows case — the one the old `file://${argv[1]}` guard got wrong — runs on
 // the POSIX machines too, not only on the Windows CI job.
 //
-// In this repo (WALL-E, NOR-349): copied unchanged from
-// modelcontextprotocol/inspector at commit
-// d330df9617e44ec893bc1a53618662239342d433, scripts/lib/main-module.test.mjs
-// (blob 018271d2f796079b3b428fa9418984b54dc610bc). This block is the only
-// edit. This repo has no Windows CI job. Record: PROVENANCE-CHECK.md.
-//
-// In fleet-mcp (NOR-357): copied unchanged from NorthwoodsSentinel/walle
-// origin/main 5fb8747, scripts/lib/main-module.test.mjs (blob
-// a248d0e4fa20b344c0b795f82eb8de053199a402). This paragraph is the only edit.
-// fleet-mcp has no Windows CI job either. Record: PROVENANCE-CHECK.md,
-// section 4.
+// In mycelia (NOR-389): from modelcontextprotocol/inspector at commit d330df9617e44ec893bc1a53618662239342d433,
+// scripts/lib/main-module.test.mjs (blob
+// 018271d2f796079b3b428fa9418984b54dc610bc); this block is the only edit. This
+// repo has no Windows CI job. Record: PROVENANCE-CHECK.md.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

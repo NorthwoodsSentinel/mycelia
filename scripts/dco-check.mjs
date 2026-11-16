@@ -34,25 +34,14 @@
 // PR: everything reachable from head that the base branch does not already
 // contain.
 //
-// --- In this repo (WALL-E, NOR-349) ----------------------------------------
-// Copied from modelcontextprotocol/inspector at commit
-// d330df9617e44ec893bc1a53618662239342d433, scripts/dco-check.mjs (blob
-// 04446dc9dd80cd304752b811d5bae24492f4e152), by copy then edit. The comments
-// above are the source's own; the branch names and issue numbers in them are
-// its repo's. His `v2/main` (the branch every PR targets) is `main` here, by
-// the owner's ruling of 2026-11-15; there is no release branch yet. Here the
-// workflow is `.github/workflows/dco.yml` and the local stage is
-// `npm run local:dco` (`--base origin/main`). Edits, one: the example in the
-// `--base` error message names `origin/main`. Design and reasons:
-// docs/DESIGN-nor-349-signoff.md; record: PROVENANCE-CHECK.md.
-//
-// --- In fleet-mcp (NOR-357) ------------------------------------------------
-// Copied unchanged from NorthwoodsSentinel/walle origin/main 5fb8747,
-// scripts/dco-check.mjs (blob a0430ee665f8bdf7383e737f191845a0ae5298a1). This
-// paragraph is the only edit. The block above is WALL-E's and holds here as
-// written: `main` is this repo's develop branch too (AGENTS.md, branch table),
-// and `local:dco` uses `--base origin/main`. The design it names is WALL-E's,
-// kept verbatim in docs/; this repo's record: PROVENANCE-CHECK.md, section 4.
+// --- In mycelia (NOR-389) ------------------------------------------------
+// From modelcontextprotocol/inspector at commit d330df9617e44ec893bc1a53618662239342d433, scripts/dco-check.mjs (blob
+// 04446dc9dd80cd304752b811d5bae24492f4e152), adapted for this repo. The
+// comments above are the source's own; the branch names and issue numbers in
+// them are its repo's. Its `v2/main` (the branch every PR targets) is `main`
+// here. The workflow is `.github/workflows/dco.yml` and the local stage is
+// `npm run local:dco` (`--base origin/main`). One edit: the example in the
+// `--base` error message names `origin/main`. Record: PROVENANCE-CHECK.md.
 
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";

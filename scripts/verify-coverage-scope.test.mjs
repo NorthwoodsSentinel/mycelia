@@ -1,24 +1,8 @@
-// mycelia (NOR-389): copied from NorthwoodsSentinel/fleet-mcp origin/main
-// f1bea96 (blob 34d5bb9a0dd2accf33ffbd51557b7f9a009ecb0e); the one edit is the
-// client name the run reports ("mycelia"). Record: PROVENANCE-CHECK.md.
-//
-// fleet-mcp (NOR-355): the MCP Inspector's `scripts/verify-coverage-scope.test.mjs`
-// (modelcontextprotocol/inspector d330df9617e44ec893bc1a53618662239342d433,
-// blob 4f4f97e528e88b1472fb44d35e6abd4552b4060c), copied byte-for-byte and
-// then edited with the guard. His tests of `expandCoverageScope` and
-// `diffCoverageScope` are kept unchanged. His two roster tests are removed
-// with the roster (one root run here). His three `run()` tests are kept in
-// substance against the one-root `run()`: a complete report passes, the
-// vitest-5 collapse fails, a missing summary fails. Codex's cases for the
-// guard (21-30) are in tools/attack-coverage.test.ts.
-//
-// ---- his header, unchanged ----
-// Unit tests for verify-coverage-scope.mjs (#2709): how a declared coverage
-// scope is expanded, how a report is compared against it, and the client
-// roster's deny-by-default. `run()` is driven over a throwaway repo with an
-// injected config resolver, so the vitest-5 shape that motivated the guard —
-// a report collapsed to `clients/web/server/**` — is reproduced without
-// installing vitest 5. Run via `npm run test:scripts`.
+// mycelia (NOR-389): the MCP Inspector's `scripts/verify-coverage-scope.test.mjs`
+// (modelcontextprotocol/inspector at commit d330df9617e44ec893bc1a53618662239342d433, blob
+// 4f4f97e528e88b1472fb44d35e6abd4552b4060c), adapted with the guard: the client
+// roster tests are removed with the roster, and the inventory cases are added.
+// Record: PROVENANCE-CHECK.md.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -250,7 +234,7 @@ test("an omission for a file the report now measures is flagged as stale", () =>
   assert.match(failures[0], /which the report now measures/);
 });
 
-// fleet-mcp: the roster tests are removed with the roster. The fixture below
+// Adapted: the roster tests are removed with the roster. The fixture below
 // is his, moved to the repo root: one declaration matching three files, two
 // of them outside `server/**`.
 function makeRootFixture() {

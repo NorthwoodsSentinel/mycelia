@@ -1,14 +1,7 @@
-// mycelia (NOR-389): copied from NorthwoodsSentinel/fleet-mcp origin/main
-// f1bea96 (blob 719fcbcbf856e2fb06c743ea062c4ddd9e928f24). Edits: the shipped
-// EXCLUDED reasons cite NOR-389, and one case for the two-project union.
-// tools/attack-inventory.test.ts, named below, is fleet-mcp's and was not
-// copied. Record: PROVENANCE-CHECK.md.
-//
-// Unit tests for scripts/verify-typecheck-coverage.mjs (NOR-355): the
-// comparison of the inventory with the program and the EXCLUDED rules, and
-// that the shipped EXCLUDED entries carry reasons. Codex's attack cases for
-// the guard (14-20) are in tools/attack-inventory.test.ts, against a real
-// compiler and fake ones. Run via `npm run test:scripts`.
+// Unit tests for scripts/verify-typecheck-coverage.mjs (NOR-389): the
+// comparison of the inventory with the program and the EXCLUDED rules, the
+// two-project union, and that the shipped EXCLUDED entries carry reasons. Run
+// via `npm run test:scripts`. Record: PROVENANCE-CHECK.md.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -29,7 +22,7 @@ test("an excluded file passes; reasonless, pattern, untracked and stale entries 
     diffTypecheck({
       tracked: ["a.ts", "b.ts"],
       program: ["a.ts"],
-      excluded: { "b.ts": "NOR-364" },
+      excluded: { "b.ts": "a reason" },
     }),
     [],
   );
@@ -37,9 +30,9 @@ test("an excluded file passes; reasonless, pattern, untracked and stale entries 
     tracked: ["a.ts", "b.ts"],
     program: ["a.ts", "b.ts"],
     excluded: {
-      "c.ts": "NOR-364",
-      "b.ts": "NOR-364",
-      "x/**": "NOR-364",
+      "c.ts": "a reason",
+      "b.ts": "a reason",
+      "x/**": "a reason",
       "a.ts": " ",
     },
   });

@@ -1,17 +1,14 @@
 #!/usr/bin/env node
-// mycelia (NOR-389): copied from NorthwoodsSentinel/fleet-mcp origin/main
-// f1bea96 (blob fd9163fdd668cf2ead9aeb10040a0227ed43d20a) and edited for one
-// fact of this repo: two tsconfig projects, not one. `tsconfig.json` is the
-// Worker program (src/, Workers types only, so a Node-only API in src/ fails
-// to compile); `tsconfig.node.json` is everything that runs under Node or Bun
-// (tests/, scripts/, vitest.config.ts). `PROJECTS` names both; each is listed
-// with `--listFilesOnly` and the union is the program. Record:
-// PROVENANCE-CHECK.md. fleet-mcp's header follows unchanged.
+// mycelia (NOR-389): adapted for this repo's two tsconfig projects.
+// `tsconfig.json` is the Worker program (src/, Workers types only, so a
+// Node-only API in src/ fails to compile); `tsconfig.node.json` is everything
+// that runs under Node or Bun (tests/, scripts/, vitest.config.ts). `PROJECTS`
+// names both; each is listed with `--listFilesOnly` and the union is the
+// program. Record: PROVENANCE-CHECK.md.
 //
 // verify:typecheck-coverage — every tracked TypeScript file gets a `tsc` pass,
-// or is named in EXCLUDED with its reason. NOR-355; design:
-// docs/DESIGN-nor-355-check.md, "Every tracked TypeScript file is typechecked
-// and coverage-measured, or named" (Codex design review r1, finding 1).
+// or is named in EXCLUDED with its reason: every tracked TypeScript file is
+// typechecked and coverage-measured, or named.
 //
 // ADAPTED from phase 2 of the MCP Inspector's scripts/verify-typecheck-coverage.mjs
 // (modelcontextprotocol/inspector d330df9617e44ec893bc1a53618662239342d433,

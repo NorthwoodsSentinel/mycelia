@@ -1,18 +1,13 @@
 #!/usr/bin/env node
-// fleet-mcp (NOR-355): this file is WALL-E's `scripts/verify-action-pins.mjs`
-// (NorthwoodsSentinel/walle, origin/main 5fb8747, blob
-// 9aea9a383b72c27d422584e1224bd6de3baa415b), copied byte-for-byte and then
-// edited. WALL-E's copy is itself the MCP Inspector's guard
-// (modelcontextprotocol/inspector, commit
-// d330df9617e44ec893bc1a53618662239342d433, blob
-// a8988d38a3f9633c47f2bdad6e63045ca6f21db2) with WALL-E's edits 1-5 below.
-// The commit before the edits holds the unedited copy; `PROVENANCE-CHECK.md`
-// has the record. The Inspector's header follows unchanged below this block,
-// so "#NNNN" numbers are HIS issue numbers and `dependency-refresh` is HIS
-// monthly sweep, which this repo does not have yet (NOR-363).
+// mycelia (NOR-389): the MCP Inspector's guard (modelcontextprotocol/inspector at commit d330df9617e44ec893bc1a53618662239342d433,
+// scripts/verify-action-pins.mjs, blob
+// a8988d38a3f9633c47f2bdad6e63045ca6f21db2), adapted for this repo with the
+// edits 1-6 below. Record: PROVENANCE-CHECK.md. The Inspector's header
+// follows unchanged below this block, so "#NNNN" numbers are ITS issue
+// numbers and `dependency-refresh` is ITS monthly sweep, which this repo does
+// not have.
 //
-// What differs from the Inspector, and why (design:
-// docs/DESIGN-nor-355-check.md, section 6):
+// What differs from the Inspector, and why:
 //
 //   1. EVERY job is checked, not only a credentialed one. In this repo the
 //      checked commit is the one the owner deploys as the Worker, so the
@@ -30,11 +25,10 @@
 //   5. `SHA_REF` is defined here instead of imported from his
 //      `dependency-refresh.mjs` (line 111 of blob cd042802), which is not
 //      brought in.
-//   6. (fleet-mcp) Each entry is opened ONCE, with O_NOFOLLOW and O_NONBLOCK,
-//      and checked with fstat on that descriptor before it is read. WALL-E's
-//      copy checked the path with lstat and then re-opened the path to read
-//      it; WALL-E's final Codex audit (finding 1, HIGH) showed a symlink
-//      swapped in between is followed. One descriptor removes the window;
+//   6. Each entry is opened ONCE, with O_NOFOLLOW and O_NONBLOCK, and checked
+//      with fstat on that descriptor before it is read. Checking the path
+//      with lstat and then re-opening the path to read it would follow a
+//      symlink swapped in between. One descriptor removes the window;
 //      O_NONBLOCK keeps a FIFO from hanging the gate.
 //
 // A YAML alias anywhere in a job stays a finding, exactly as he has it and for
@@ -347,7 +341,7 @@ export function main(root = repoRoot, hooks = {}) {
       `verify:action-pins — ${problems.length} problem(s); every action ref must be SHA-pinned:\n` +
         problems.join("\n") +
         "\n\nIn this repo every job, credentialed or not, runs only immutable refs" +
-        "\n(NOR-355; the source's rule covers credentialed jobs only). Pin each as" +
+        "\n(this repo's rule; the source's covers credentialed jobs only). Pin each as" +
         "\n  uses: owner/repo@<40-hex sha> # vX.Y.Z" +
         "\nresolving the SHA and the exact release from the same tag lookup. A local" +
         "\n`./…` ref and a YAML alias are findings too: spell the pinned ref out.",

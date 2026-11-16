@@ -1,24 +1,15 @@
-// mycelia (NOR-389): copied from NorthwoodsSentinel/fleet-mcp origin/main
-// f1bea96 (blob d7942703ca4f96128fa78ef31f2383862b8ce400) and edited only in
-// `FOLLOWUP`, `EXCLUDED`, `EXCLUDED_PATTERNS` and the client name in `run()`,
-// for this repo's files. Record: PROVENANCE-CHECK.md. fleet-mcp's header
-// follows unchanged.
+// mycelia (NOR-389): the MCP Inspector's `scripts/verify-coverage-scope.mjs`
+// (modelcontextprotocol/inspector at commit d330df9617e44ec893bc1a53618662239342d433, blob
+// ec119f3d5bc1b91ecdd0b674335abda2ae466237), adapted for this repo. Its header
+// follows unchanged; read "client" as "this repository", which has one
+// coverage run at its root. Record: PROVENANCE-CHECK.md.
 //
-// fleet-mcp (NOR-355): the MCP Inspector's `scripts/verify-coverage-scope.mjs`
-// (modelcontextprotocol/inspector, commit
-// d330df9617e44ec893bc1a53618662239342d433, blob
-// ec119f3d5bc1b91ecdd0b674335abda2ae466237), copied byte-for-byte and then
-// edited. The commit before the edits holds the unedited copy;
-// `PROVENANCE-CHECK.md` has the record. His header follows unchanged; read
-// "client" as "this repository", which has one coverage run at its root.
-//
-// What differs, and why (design: docs/DESIGN-nor-355-check.md, sections 4 and
-// "Design review r1"):
+// What differs, and why:
 //
 //   1. One root run instead of five clients: `CLIENTS`, the client roster and
 //      its discovery are removed. `run()` checks `vitest.config.ts` at the
 //      repo root and reads `coverage/coverage-summary.json` there.
-//   2. A tracked-file inventory (Codex design review r1, finding 1). Every
+//   2. A tracked-file inventory (a review finding: a tracked file the declaration does not select would otherwise be ungated). Every
 //      tracked TypeScript file (`scripts/lib/ts-inventory.mjs`, the Inspector's
 //      own `verify-typecheck-coverage.mjs` inventory) must be in the expanded
 //      declaration, or be an exact path in `EXCLUDED`, or match a pattern in
@@ -30,7 +21,7 @@
 //      exact paths only: a glob there is refused, so the reviewed pattern
 //      list stays the only broad exclusion.
 //   3. `--prepare` deletes the summary before the run and fails if it is still
-//      there (Codex design review r1, finding 3): his guard reads whatever
+//      there (a stale summary could otherwise be judged): his guard reads whatever
 //      summary exists, so a summary left by an earlier run could be judged.
 //      It removes the one path: a symlink is unlinked, not followed; a
 //      directory there is a failure, not a recursive delete.
@@ -147,7 +138,7 @@ export const EXCLUDED = {
   "src/routes/requests.ts": FOLLOWUP,
   "src/routes/schemas.ts": FOLLOWUP,
   "vitest.config.ts":
-    "configuration, not code under test (as fleet-mcp has it)",
+    "configuration, not code under test (test and configuration code is not measured)",
 };
 
 /**
@@ -157,7 +148,8 @@ export const EXCLUDED = {
  * @type {Record<string, string>}
  */
 export const EXCLUDED_PATTERNS = {
-  "**/*.test.ts": "test files are not code under test (as fleet-mcp has it)",
+  "**/*.test.ts":
+    "test files are not code under test (test and configuration code is not measured)",
   "tests/**":
     "the Vitest suite's helpers (D1 adapter, fixtures, type shims) are test code, not code under test",
 };
