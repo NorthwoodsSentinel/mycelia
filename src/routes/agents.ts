@@ -107,7 +107,7 @@ agents.post('/', requireAgentKey, rateLimit('agent.register'), async (c) => {
   // NOTE: this counts ALL rows for the owner regardless of status. No route
   // deletes an agent row (no DELETE FROM agents in src/), so the count is a
   // high-water mark on rows ever created and revocation does NOT free a slot.
-  const OWNER_AGENT_CAP = 12;
+  const OWNER_AGENT_CAP = 24; // 12 -> 24 (NOR-532, Rob 2026-11-16: "raise the cap"): room for Fiddlehead; rows never free a slot
   if ((ownerCount?.count ?? 0) >= OWNER_AGENT_CAP) {
     return c.json(error('FORBIDDEN', `Maximum ${OWNER_AGENT_CAP} agents per owner_id`, 403).body, 403);
   }

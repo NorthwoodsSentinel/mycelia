@@ -1,8 +1,8 @@
 // tests/integration/owner-cap.test.ts
 // ROUTE-LEVEL proof of the owner agent cap. Sends a real POST /v1/agents
 // through src/index.ts. No local CAP constant: the assertions are on the
-// route's own status and message, so this file fails on a cap of 11 and
-// passes on 12 WITHOUT being edited (cap 11 -> 12, NOR-129).
+// route's own status and message. Cap history: 11 -> 12 (NOR-129),
+// 12 -> 24 (NOR-532, room for Fiddlehead); the numbers below move with it.
 import { describe, it, expect, beforeEach } from 'vitest';
 import app from '../../src/index';
 import { applyMigrationsSync, createTestEnv, TestEnv } from './_fixtures';
@@ -55,9 +55,9 @@ describe('POST /v1/agents — owner cap, via the route', () => {
     (await env.DB.prepare('SELECT COUNT(*) as c FROM agents WHERE owner_id = ?')
       .bind(OWNER).first<{ c: number }>())?.c ?? -1;
 
-  it('ADMITS registration when the owner holds 11 rows: 2xx, agent id, row count 12', async () => {
-    await seedRows(env, 11);
-    expect(await rowCount(env)).toBe(11);
+  it('ADMITS registration when the owner holds 23 rows: 2xx, agent id, row count 24', async () => {
+    await seedRows(env, 23);
+    expect(await rowCount(env)).toBe(23);
     const res = await register(env);
     const body: any = await res.json();
     // positive assertions — "not 403" would pass on any unrelated failure
@@ -67,35 +67,35 @@ describe('POST /v1/agents — owner cap, via the route', () => {
     expect(typeof body?.data?.agent?.id).toBe('string');
     expect(body.data.agent.id.length).toBeGreaterThan(0);
     expect(body?.data?.agent?.name).toBe('codex-cap-probe');
-    expect(await rowCount(env)).toBe(12);          // the row actually landed
+    expect(await rowCount(env)).toBe(24);          // the row actually landed
   });
 
-  it('REJECTS registration when the owner holds 12 rows', async () => {
-    await seedRows(env, 12);
+  it('REJECTS registration when the owner holds 24 rows', async () => {
+    await seedRows(env, 24);
     const res = await register(env);
     const body: any = await res.json();
     expect(res.status).toBe(403);
-    expect(body?.error?.message).toBe('Maximum 12 agents per owner_id');
-    expect(await rowCount(env)).toBe(12);          // nothing was inserted
+    expect(body?.error?.message).toBe('Maximum 24 agents per owner_id');
+    expect(await rowCount(env)).toBe(24);          // nothing was inserted
   });
 
-  it('the cap holds under a race: a stale early count (11) with 12 rows already present still rejects, nothing inserted', async () => {
-    await seedRows(env, 12);
-    // A concurrent registration landed after this request's early COUNT: that COUNT is forced to report 11.
+  it('the cap holds under a race: a stale early count (23) with 24 rows already present still rejects, nothing inserted', async () => {
+    await seedRows(env, 24);
+    // A concurrent registration landed after this request's early COUNT: that COUNT is forced to report 23.
     const orig = env.DB.prepare.bind(env.DB);
     (env.DB as any).prepare = (sql: string) => sql === 'SELECT COUNT(*) as count FROM agents WHERE owner_id = ?'
-      ? orig("SELECT 11 as count WHERE ? IS NOT NULL") : orig(sql);
+      ? orig("SELECT 23 as count WHERE ? IS NOT NULL") : orig(sql);
     const res = await register(env);
     (env.DB as any).prepare = orig;
     const body: any = await res.json();
     expect(res.status).toBe(403);
-    expect(body?.error?.message).toBe('Maximum 12 agents per owner_id');
-    expect(await rowCount(env)).toBe(12);          // the conditional insert refused; still exactly 12
+    expect(body?.error?.message).toBe('Maximum 24 agents per owner_id');
+    expect(await rowCount(env)).toBe(24);          // the conditional insert refused; still exactly 24
     expect((await env.DB.prepare("SELECT COUNT(*) as c FROM agent_capabilities WHERE agent_id NOT LIKE 'cap-%'").first<{ c: number }>())?.c).toBe(0);
   });
 
-  it('a deactivated row still counts: 12 rows with one deactivated → still rejected (high-water mark)', async () => {
-    await seedRows(env, 12);
+  it('a deactivated row still counts: 24 rows with one deactivated → still rejected (high-water mark)', async () => {
+    await seedRows(env, 24);
     await env.DB.prepare("UPDATE agents SET status = 'deactivated' WHERE id = 'cap-11'").run();
     const res = await register(env);
     expect(res.status).toBe(403);                  // a retired row does not free a slot (high-water mark)
